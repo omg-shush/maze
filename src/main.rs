@@ -21,11 +21,13 @@ use vulkano::format::ClearValue;
 use vulkano::impl_vertex;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::{BufferUsage, TypedBufferAccess};
-use vulkano::pipeline::GraphicsPipeline;
 use vulkano::pipeline::viewport::Viewport;
-use vulkano::render_pass::{Subpass, Framebuffer, FramebufferAbstract};
+use vulkano::render_pass::{Framebuffer, FramebufferAbstract};
 use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
+
+mod world;
+mod pipeline;
 
 fn main() {
     // Create vulkan instance
@@ -89,85 +91,12 @@ fn main() {
                                      .build().unwrap();
     println!("Created swapchain {:?}", swapchain);
 
-    #[derive(Default, Debug, Clone)]
-    pub struct Vertex {
-        pub position: [f32; 2],
-    }
-    impl_vertex!(Vertex, position);
-
-    let vertex_buffer =
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::vertex_buffer(),
-            false,
-            [
-                Vertex { position: [-0.75, 0.5] },
-                Vertex { position: [0.75, 0.5] },
-                Vertex { position: [0.0, -0.5] }
-            ].iter().cloned()
-        ).unwrap();
-
-    // Compile shaders
-    mod vs {
-        vulkano_shaders::shader! {
-            ty: "vertex",
-            src: "
-            #version 450
-            layout(location = 0) in vec2 position;
-            void main() {
-                gl_Position = vec4(position, 0.0, 1.0);
-            }
-            "
-        }
-    }
-    mod fs {
-        vulkano_shaders::shader! {
-            ty: "fragment",
-            src: "
-            #version 450
-            layout(location = 0) out vec4 f_color;
-            void main() {
-                f_color = vec4(0.0, 1.0, 0.0, 1.0);
-            }
-            "
-        }
-    }
-    let vertex_shader = vs::Shader::load(device.clone()).unwrap();
-    let fragment_shader = fs::Shader::load(device.clone()).unwrap();
-
-    let render_pass = Arc::new(
-        vulkano::single_pass_renderpass!(
-            device.clone(),
-            attachments: {
-                custom_color: {
-                    load: Clear,
-                    store: Store,
-                    format: swapchain.format(),
-                    samples: 1,
-                }
-            },
-            pass: {
-                color: [custom_color],
-                depth_stencil: {}
-            }
-        ).unwrap()
-    );
-
-    let pipeline = Arc::new(
-        GraphicsPipeline::start()
-            .vertex_input_single_buffer::<Vertex>()
-            .vertex_shader(vertex_shader.main_entry_point(), ())
-            .fragment_shader(fragment_shader.main_entry_point(), ())
-            .triangle_list()
-            .viewports_dynamic_scissors_irrelevant(1)
-            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-            .build(device.clone())
-            .unwrap()
-    );
+    // Compile shader pipeline
+    let pipeline = pipeline::compile_shaders::<world::Vertex>(device.clone(), &swapchain);
 
     // Initialize framebuffers
     let dimensions = images[0].dimensions();
-    let viewport = Viewport {
+    let mut viewport = Viewport {
         origin: [0.0, 0.0],
         dimensions: [dimensions[0] as f32, dimensions[1] as f32],
         depth_range: 0.0..1.0
@@ -177,7 +106,7 @@ fn main() {
         .map(|image| {
             let view = ImageView::new(image.clone()).unwrap();
             Arc::new(
-                Framebuffer::start(render_pass.clone())
+                Framebuffer::start(pipeline.render_pass.clone())
                     .add(view)
                     .unwrap()
                     .build()
@@ -204,6 +133,11 @@ fn main() {
 
             if recreate_swapchain {
                 let dimensions: [u32; 2] = surface.window().inner_size().into();
+                viewport = Viewport {
+                    origin: [0.0, 0.0],
+                    dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+                    depth_range: 0.0..1.0
+                };
                 let (new_swapchain, new_images) =
                     match swapchain.recreate().dimensions(dimensions).build() {
                         Ok (r) => r,
@@ -216,7 +150,7 @@ fn main() {
                     .map(|image| {
                         let view = ImageView::new(image.clone()).unwrap();
                         Arc::new(
-                            Framebuffer::start(render_pass.clone())
+                            Framebuffer::start(pipeline.render_pass.clone())
                                 .add(view)
                                 .unwrap()
                                 .build()
@@ -233,7 +167,7 @@ fn main() {
                         recreate_swapchain = true;
                         return;
                     }
-                    Err(e) => panic!("Failed to acquire next framebuffer!")
+                    Err(e) => panic!("Failed to acquire next framebuffer! {}", e)
                 };
             if suboptimal {
                 recreate_swapchain = true;
@@ -246,6 +180,8 @@ fn main() {
                 CommandBufferUsage::OneTimeSubmit
             ).unwrap();
 
+            let vertex_buffer = world::vertex_buffer(device.clone());
+
             builder
                 .begin_render_pass(
                     framebuffers[image_num].clone(),
@@ -253,7 +189,7 @@ fn main() {
                     clear_values
                 ).unwrap()
                 .set_viewport(0, [viewport.clone()])
-                .bind_pipeline_graphics(pipeline.clone())
+                .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
                 .bind_vertex_buffers(0, vertex_buffer.clone())
                 .draw(
                     vertex_buffer.len() as u32, 1, 0, 0
