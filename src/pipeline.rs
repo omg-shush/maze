@@ -8,28 +8,38 @@ use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::Subpass;
 use vulkano::pipeline::vertex::Vertex;
 use vulkano::render_pass::RenderPass;
+use vulkano::pipeline::layout::PipelineLayout;
+use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
+use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
+use vulkano::buffer::{BufferUsage, TypedBufferAccess};
 
-mod vs {
+pub mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
         src: "
         #version 450
         layout(location = 0) in vec2 position;
+        layout(push_constant) uniform PlayerPositionData {
+            vec2 player_position;
+        } ppd;
         void main() {
-            gl_Position = vec4(position, 0.0, 1.0);
+            gl_Position = vec4(position - ppd.player_position, 0.0, 1.0);
         }
         "
     }
 }
 
-mod fs {
+pub mod fs {
     vulkano_shaders::shader! {
         ty: "fragment",
         src: "
         #version 450
+        layout(set = 0, binding = 0) uniform TriangleColorData {
+            vec3 triangle_color;
+        } tc;
         layout(location = 0) out vec4 f_color;
         void main() {
-            f_color = vec4(0.0, 1.0, 0.0, 1.0);
+            f_color = vec4(tc.triangle_color, 1.0);
         }
         "
     }
@@ -40,7 +50,9 @@ pub struct Pipeline {
     pub graphics_pipeline: Arc<GraphicsPipeline>
 }
 
-pub fn compile_shaders<T: Vertex>(device: Arc<Device>, swapchain: &Swapchain<Window>) -> Pipeline {
+pub fn compile_shaders<T: Vertex>(
+        device: Arc<Device>,
+        swapchain: &Swapchain<Window>) -> Pipeline {
     let vertex_shader = vs::Shader::load(device.clone()).unwrap();
     let fragment_shader = fs::Shader::load(device.clone()).unwrap();
 
@@ -73,6 +85,10 @@ pub fn compile_shaders<T: Vertex>(device: Arc<Device>, swapchain: &Swapchain<Win
             .build(device.clone())
             .unwrap()
     );
+
+    println!("Shaders compiled. {} Descriptor sets, {} Push constants",
+        graphics_pipeline.layout().descriptor_set_layouts().len(),
+        graphics_pipeline.layout().push_constant_ranges().len());
 
     Pipeline {render_pass, graphics_pipeline}
 }

@@ -3,10 +3,12 @@ use std::vec;
 use std::sync::Arc;
 
 use ash::vk::{QueueFamilyProperties, QueueFlags, Extent3D};
+use vulkano::descriptor_set::{DescriptorSet, SingleLayoutDescSetPool};
 use vulkano_win::VkSurfaceBuild;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
+use winit::dpi::{PhysicalSize, PhysicalPosition};
 
 use vulkano::device::{Device, Features, DeviceExtensions};
 use vulkano::device::physical::{PhysicalDevice, QueueFamily};
@@ -20,11 +22,13 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, Prim
 use vulkano::format::ClearValue;
 use vulkano::impl_vertex;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::{BufferUsage, TypedBufferAccess};
+use vulkano::buffer::{BufferUsage, DeviceLocalBuffer, TypedBufferAccess};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract};
 use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
+use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
+use vulkano::pipeline::PipelineBindPoint;
 
 mod world;
 mod pipeline;
@@ -70,7 +74,12 @@ fn main() {
 
     // Create window
     let event_loop = EventLoop::new();
-    let surface = WindowBuilder::new().build_vk_surface(&event_loop, instance.clone()).unwrap();
+    let surface = WindowBuilder::new()
+        .with_inner_size(PhysicalSize { width: 1280, height: 720 })
+        .with_position(PhysicalPosition { x : 300, y: 200 })
+        .with_resizable(false)
+        .with_title("maze or something i guess")
+        .build_vk_surface(&event_loop, instance.clone()).unwrap();
 
     // Create swapchain
     let surface_caps = surface.capabilities(card).unwrap();
@@ -91,8 +100,12 @@ fn main() {
                                      .build().unwrap();
     println!("Created swapchain {:?}", swapchain);
 
+    // Generate vertex data
+    let vertex_buffer = world::vertex_buffer(device.clone());
+
     // Compile shader pipeline
     let pipeline = pipeline::compile_shaders::<world::Vertex>(device.clone(), &swapchain);
+    // let uniform_buffer = pipeline.graphics_pipeline.
 
     // Initialize framebuffers
     let dimensions = images[0].dimensions();
@@ -116,6 +129,13 @@ fn main() {
 
     let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
     let mut recreate_swapchain = false;
+
+    let mut player_position_data = pipeline::vs::ty::PlayerPositionData {
+        player_position: [0.0, 0.0]
+    };
+    let mut triangle_color_data = pipeline::fs::ty::TriangleColorData {
+        triangle_color: [1.0, 0.0, 0.0]
+    };
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -180,7 +200,22 @@ fn main() {
                 CommandBufferUsage::OneTimeSubmit
             ).unwrap();
 
-            let vertex_buffer = world::vertex_buffer(device.clone());
+            player_position_data.player_position[0] += 0.001;
+
+            let uniform_buffer = CpuAccessibleBuffer::from_data(
+                device.clone(),
+                BufferUsage::uniform_buffer_transfer_destination(),
+                false,
+                pipeline::fs::ty::TriangleColorData { triangle_color: [1.0, 0.0, 0.0] }
+            ).unwrap();
+            let mut pool = SingleLayoutDescSetPool::new(
+                pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
+            );
+            let descriptor_set = {
+                let mut builder = pool.next();
+                builder.add_buffer(uniform_buffer.clone()).unwrap();
+                builder.build().unwrap()
+            };
 
             builder
                 .begin_render_pass(
@@ -191,6 +226,13 @@ fn main() {
                 .set_viewport(0, [viewport.clone()])
                 .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
                 .bind_vertex_buffers(0, vertex_buffer.clone())
+                .bind_descriptor_sets(
+                    PipelineBindPoint::Graphics,
+                    pipeline.graphics_pipeline.layout().clone(),
+                    0,
+                    descriptor_set
+                )
+                .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, player_position_data)
                 .draw(
                     vertex_buffer.len() as u32, 1, 0, 0
                 ).unwrap()

@@ -14,7 +14,7 @@ use vulkano::buffer::BufferUsage;
 pub fn vertex_buffer(device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[Vertex]>> {
     CpuAccessibleBuffer::from_iter(
         device.clone(),
-        BufferUsage::vertex_buffer(),
+        BufferUsage::all(),
         false,
         [
             Vertex { position: [-0.75, 0.5] },
