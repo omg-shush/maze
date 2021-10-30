@@ -2,36 +2,33 @@ use std::borrow::Cow;
 use std::vec;
 use std::sync::Arc;
 
-use ash::vk::{QueueFamilyProperties, QueueFlags, Extent3D};
-use vulkano::descriptor_set::{DescriptorSet, SingleLayoutDescSetPool};
+use vulkano::descriptor_set::{SingleLayoutDescSetPool};
 use vulkano_win::VkSurfaceBuild;
-use winit::event::{Event, WindowEvent};
+use winit::event::{Event, KeyboardInput, VirtualKeyCode, WindowEvent, ElementState};
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::{Window, WindowBuilder};
+use winit::window::{WindowBuilder};
 use winit::dpi::{PhysicalSize, PhysicalPosition};
 
 use vulkano::device::{Device, Features, DeviceExtensions};
-use vulkano::device::physical::{PhysicalDevice, QueueFamily};
-use vulkano::instance::{Instance, InstanceExtensions, ApplicationInfo};
+use vulkano::device::physical::{PhysicalDevice};
+use vulkano::instance::{Instance, ApplicationInfo};
 use vulkano::Version;
 use vulkano::image::ImageUsage;
 use vulkano::image::view::ImageView;
 use vulkano::swapchain;
 use vulkano::swapchain::{Swapchain, AcquireError, SwapchainCreationError};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryCommandBuffer, SubpassContents};
-use vulkano::format::ClearValue;
-use vulkano::impl_vertex;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::{BufferUsage, DeviceLocalBuffer, TypedBufferAccess};
+use vulkano::buffer::{BufferUsage, TypedBufferAccess};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract};
 use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
-use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::pipeline::PipelineBindPoint;
 
 mod world;
 mod pipeline;
+mod disjoint_set;
 
 fn main() {
     // Create vulkan instance
@@ -105,7 +102,6 @@ fn main() {
 
     // Compile shader pipeline
     let pipeline = pipeline::compile_shaders::<world::Vertex>(device.clone(), &swapchain);
-    // let uniform_buffer = pipeline.graphics_pipeline.
 
     // Initialize framebuffers
     let dimensions = images[0].dimensions();
@@ -133,9 +129,8 @@ fn main() {
     let mut player_position_data = pipeline::vs::ty::PlayerPositionData {
         player_position: [0.0, 0.0]
     };
-    let mut triangle_color_data = pipeline::fs::ty::TriangleColorData {
-        triangle_color: [1.0, 0.0, 0.0]
-    };
+    // Up, down, left, right
+    let mut keys = [ElementState::Released; 4];
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -147,6 +142,22 @@ fn main() {
             event: WindowEvent::Resized(_), ..
         } => {
             recreate_swapchain = true;
+        }
+        Event::WindowEvent {
+            event: WindowEvent::KeyboardInput {
+                input: KeyboardInput {
+                    virtual_keycode: Some (keycode),
+                    state, ..
+                }, ..
+            }, ..
+        } => {
+            match keycode {
+                VirtualKeyCode::W => keys[0] = state,
+                VirtualKeyCode::S => keys[1] = state,
+                VirtualKeyCode::A => keys[2] = state,
+                VirtualKeyCode::D => keys[3] = state,
+                _ => {}
+            }
         }
         Event::RedrawEventsCleared => {
             previous_frame_end.as_mut().unwrap().cleanup_finished();
@@ -193,15 +204,28 @@ fn main() {
                 recreate_swapchain = true;
             }
 
-            let clear_values = vec![[0.0, 0.0, 1.0, 1.0].into()];
+            let clear_values = vec![[0.5, 0.5, 0.85, 1.0].into()];
             let mut builder = AutoCommandBufferBuilder::primary(
                 device.clone(),
                 draw_queue.family(),
                 CommandBufferUsage::OneTimeSubmit
             ).unwrap();
 
-            player_position_data.player_position[0] += 0.001;
+            // Update push constants
+            if keys[0] == ElementState::Pressed { // Up
+                player_position_data.player_position[1] -= 0.005;
+            }
+            if keys[1] == ElementState::Pressed { // Down
+                player_position_data.player_position[1] += 0.005;
+            }
+            if keys[2] == ElementState::Pressed { // Left
+                player_position_data.player_position[0] -= 0.005;
+            }
+            if keys[3] == ElementState::Pressed { // Right
+                player_position_data.player_position[0] += 0.005;
+            }
 
+            // Update uniforms
             let uniform_buffer = CpuAccessibleBuffer::from_data(
                 device.clone(),
                 BufferUsage::uniform_buffer_transfer_destination(),

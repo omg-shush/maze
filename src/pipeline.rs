@@ -19,11 +19,14 @@ pub mod vs {
         src: "
         #version 450
         layout(location = 0) in vec2 position;
+        layout(location = 1) in vec3 color;
         layout(push_constant) uniform PlayerPositionData {
             vec2 player_position;
         } ppd;
+        layout(location = 0) out vec3 passColor;
         void main() {
-            gl_Position = vec4(position - ppd.player_position, 0.0, 1.0);
+            gl_Position = vec4((position / 4) - ppd.player_position, 0.0, 1.0);
+            passColor = color;
         }
         "
     }
@@ -34,12 +37,13 @@ pub mod fs {
         ty: "fragment",
         src: "
         #version 450
+        layout(location = 0) in vec3 passColor;
         layout(set = 0, binding = 0) uniform TriangleColorData {
             vec3 triangle_color;
         } tc;
         layout(location = 0) out vec4 f_color;
         void main() {
-            f_color = vec4(tc.triangle_color, 1.0);
+            f_color = vec4(passColor, 1.0);
         }
         "
     }
