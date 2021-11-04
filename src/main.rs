@@ -72,7 +72,7 @@ fn main() {
     // Create window
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
-        .with_inner_size(PhysicalSize { width: 1280, height: 720 })
+        .with_inner_size(PhysicalSize { width: 800, height: 720 })
         .with_position(PhysicalPosition { x : 300, y: 200 })
         .with_resizable(false)
         .with_title("maze or something i guess")
@@ -99,6 +99,7 @@ fn main() {
 
     // Generate vertex data
     let vertex_buffer = world::vertex_buffer(device.clone());
+    let player_buffer = world::player_buffer(device.clone());
 
     // Compile shader pipeline
     let pipeline = pipeline::compile_shaders::<world::Vertex>(device.clone(), &swapchain);
@@ -213,16 +214,16 @@ fn main() {
 
             // Update push constants
             if keys[0] == ElementState::Pressed { // Up
-                player_position_data.player_position[1] -= 0.005;
+                player_position_data.player_position[1] -= 0.01;
             }
             if keys[1] == ElementState::Pressed { // Down
-                player_position_data.player_position[1] += 0.005;
+                player_position_data.player_position[1] += 0.01;
             }
             if keys[2] == ElementState::Pressed { // Left
-                player_position_data.player_position[0] -= 0.005;
+                player_position_data.player_position[0] -= 0.01;
             }
             if keys[3] == ElementState::Pressed { // Right
-                player_position_data.player_position[0] += 0.005;
+                player_position_data.player_position[0] += 0.01;
             }
 
             // Update uniforms
@@ -257,9 +258,10 @@ fn main() {
                     descriptor_set
                 )
                 .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, player_position_data)
-                .draw(
-                    vertex_buffer.len() as u32, 1, 0, 0
-                ).unwrap()
+                .draw(vertex_buffer.len() as u32, 1, 0, 0).unwrap()
+                .bind_vertex_buffers(0, player_buffer.clone())
+                .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, pipeline::vs::ty::PlayerPositionData { player_position: [0.0, 0.0] })
+                .draw(player_buffer.len() as u32, 1, 0, 0).unwrap()
                 .end_render_pass().unwrap();
             let command_buffer = builder.build().unwrap();
 

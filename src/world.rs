@@ -101,6 +101,27 @@ pub fn generate_maze(world: &mut World) {
     println!("# cells in maze: {}", cells.len())
 }
 
+pub fn player_buffer(device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[Vertex]>> {
+    const PLAYER_COLOR: [f32; 3] = [ 0.8, 0.2, 0.2 ];
+    const HALF_SIZE: f32 = 0.2;
+    let (x, y) = (0.0, 0.0);
+    let data = [
+        Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR },
+        Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR },
+        Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR },
+        Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR },
+        Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR },
+        Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR }
+    ].to_vec();
+
+    CpuAccessibleBuffer::from_iter(
+        device.clone(),
+        BufferUsage::vertex_buffer(),
+        false,
+        data
+    ).unwrap()
+}
+
 pub fn vertex_buffer(device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[Vertex]>> {
     // Start by creating a 2D grid, with walls around each cell
     let mut world = World {
