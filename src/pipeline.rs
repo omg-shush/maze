@@ -8,10 +8,6 @@ use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::Subpass;
 use vulkano::pipeline::vertex::Vertex;
 use vulkano::render_pass::RenderPass;
-use vulkano::pipeline::layout::PipelineLayout;
-use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
-use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::{BufferUsage, TypedBufferAccess};
 
 pub mod vs {
     vulkano_shaders::shader! {
@@ -23,9 +19,12 @@ pub mod vs {
         layout(push_constant) uniform PlayerPositionData {
             vec2 player_position;
         } ppd;
+        layout(set = 0, binding = 0) uniform ViewProjectionData {
+            mat4 vp;
+        } vpd;
         layout(location = 0) out vec3 passColor;
         void main() {
-            gl_Position = vec4((position / 4) - ppd.player_position, 0.0, 1.0);
+            gl_Position = vpd.vp * vec4(position - ppd.player_position, 0.0, 1.0);
             passColor = color;
         }
         "
@@ -38,9 +37,6 @@ pub mod fs {
         src: "
         #version 450
         layout(location = 0) in vec3 passColor;
-        layout(set = 0, binding = 0) uniform TriangleColorData {
-            vec3 triangle_color;
-        } tc;
         layout(location = 0) out vec4 f_color;
         void main() {
             f_color = vec4(passColor, 1.0);

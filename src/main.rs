@@ -227,18 +227,18 @@ fn main() {
             }
 
             // Update uniforms
-            let uniform_buffer = CpuAccessibleBuffer::from_data(
+            let vp_buffer = CpuAccessibleBuffer::from_data(
                 device.clone(),
                 BufferUsage::uniform_buffer_transfer_destination(),
                 false,
-                pipeline::fs::ty::TriangleColorData { triangle_color: [1.0, 0.0, 0.0] }
+                pipeline::vs::ty::ViewProjectionData { vp: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]] }
             ).unwrap();
             let mut pool = SingleLayoutDescSetPool::new(
                 pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
             );
             let descriptor_set = {
                 let mut builder = pool.next();
-                builder.add_buffer(uniform_buffer.clone()).unwrap();
+                builder.add_buffer(vp_buffer.clone()).unwrap();
                 builder.build().unwrap()
             };
 
