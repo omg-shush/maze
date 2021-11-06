@@ -16,15 +16,12 @@ pub mod vs {
         #version 450
         layout(location = 0) in vec2 position;
         layout(location = 1) in vec3 color;
-        layout(push_constant) uniform PlayerPositionData {
-            vec2 player_position;
-        } ppd;
-        layout(set = 0, binding = 0) uniform ViewProjectionData {
+        layout(push_constant) uniform ViewProjectionData {
             mat4 vp;
         } vpd;
         layout(location = 0) out vec3 passColor;
         void main() {
-            gl_Position = vpd.vp * vec4(position - ppd.player_position, 0.0, 1.0);
+            gl_Position = vpd.vp * vec4(position, 0.0, 1.0);
             passColor = color;
         }
         "

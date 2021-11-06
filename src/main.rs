@@ -29,6 +29,7 @@ use vulkano::pipeline::PipelineBindPoint;
 mod world;
 mod pipeline;
 mod disjoint_set;
+mod camera;
 
 fn main() {
     // Create vulkan instance
@@ -72,7 +73,7 @@ fn main() {
     // Create window
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
-        .with_inner_size(PhysicalSize { width: 800, height: 720 })
+        .with_inner_size(PhysicalSize { width: 1600, height: 1600 })
         .with_position(PhysicalPosition { x : 300, y: 200 })
         .with_resizable(false)
         .with_title("maze or something i guess")
@@ -98,8 +99,20 @@ fn main() {
     println!("Created swapchain {:?}", swapchain);
 
     // Generate vertex data
-    let vertex_buffer = world::vertex_buffer(device.clone());
-    let player_buffer = world::player_buffer(device.clone());
+    let mut world = world::World::new();
+    world.generate_maze();
+    let vertex_buffer = CpuAccessibleBuffer::from_iter(
+        device.clone(),
+        BufferUsage::vertex_buffer(),
+        false,
+        world.vertex_buffer()
+    ).expect("Failed to construct buffer");
+    let player_buffer = CpuAccessibleBuffer::from_iter(
+        device.clone(),
+        BufferUsage::vertex_buffer(),
+        false,
+        world.player_buffer()
+    ).expect("Failed to construct buffer");
 
     // Compile shader pipeline
     let pipeline = pipeline::compile_shaders::<world::Vertex>(device.clone(), &swapchain);
@@ -127,9 +140,11 @@ fn main() {
     let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
     let mut recreate_swapchain = false;
 
-    let mut player_position_data = pipeline::vs::ty::PlayerPositionData {
-        player_position: [0.0, 0.0]
-    };
+    let mut camera = camera::Camera::new();
+    let mut player_camera = camera::Camera::new();
+    camera.scale([0.1, 0.1, 0.1]);
+    player_camera.scale([0.1, 0.1, 0.1]);
+
     // Up, down, left, right
     let mut keys = [ElementState::Released; 4];
 
@@ -152,11 +167,42 @@ fn main() {
                 }, ..
             }, ..
         } => {
+            let speed = 1.0;
+            let seconds = 0.5;
+            let pos = camera.get_position().map(|f| f.round() as i32);
             match keycode {
-                VirtualKeyCode::W => keys[0] = state,
-                VirtualKeyCode::S => keys[1] = state,
-                VirtualKeyCode::A => keys[2] = state,
-                VirtualKeyCode::D => keys[3] = state,
+                VirtualKeyCode::W | VirtualKeyCode::Up => {
+                    if state == ElementState::Pressed && keys[0] == ElementState::Released {
+                        if world.check_move([pos[0], pos[1]], [pos[0], pos[1] - 1]) {
+                            camera.adjust([0.0, -1.0, 0.0], seconds, speed);
+                        }
+                    }
+                    keys[0] = state;
+                },
+                VirtualKeyCode::S | VirtualKeyCode::Down => {
+                    if state == ElementState::Pressed && keys[0] == ElementState::Released {
+                        if world.check_move([pos[0], pos[1]], [pos[0], pos[1] + 1]) {
+                            camera.adjust([0.0, 1.0, 0.0], seconds, speed);
+                        }
+                    }
+                    keys[1] = state
+                },
+                VirtualKeyCode::A | VirtualKeyCode::Left => {
+                    if state == ElementState::Pressed && keys[0] == ElementState::Released {
+                        if world.check_move([pos[0], pos[1]], [pos[0] - 1, pos[1]]) {
+                            camera.adjust([-1.0, 0.0, 0.0], seconds, speed);
+                        }
+                    }
+                    keys[2] = state
+                },
+                VirtualKeyCode::D | VirtualKeyCode::Right => {
+                    if state == ElementState::Pressed && keys[0] == ElementState::Released {
+                        if world.check_move([pos[0], pos[1]], [pos[0] + 1, pos[1]]) {
+                            camera.adjust([1.0, 0.0, 0.0], seconds, speed);
+                        }
+                    }
+                    keys[3] = state
+                },
                 _ => {}
             }
         }
@@ -206,63 +252,68 @@ fn main() {
             }
 
             let clear_values = vec![[0.5, 0.5, 0.85, 1.0].into()];
+            let destination_values = vec![[0.5, 0.85, 0.5, 1.0].into()];
             let mut builder = AutoCommandBufferBuilder::primary(
                 device.clone(),
                 draw_queue.family(),
                 CommandBufferUsage::OneTimeSubmit
             ).unwrap();
 
-            // Update push constants
-            if keys[0] == ElementState::Pressed { // Up
-                player_position_data.player_position[1] -= 0.01;
-            }
-            if keys[1] == ElementState::Pressed { // Down
-                player_position_data.player_position[1] += 0.01;
-            }
-            if keys[2] == ElementState::Pressed { // Left
-                player_position_data.player_position[0] -= 0.01;
-            }
-            if keys[3] == ElementState::Pressed { // Right
-                player_position_data.player_position[0] += 0.01;
-            }
-
             // Update uniforms
-            let vp_buffer = CpuAccessibleBuffer::from_data(
-                device.clone(),
-                BufferUsage::uniform_buffer_transfer_destination(),
-                false,
-                pipeline::vs::ty::ViewProjectionData { vp: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]] }
-            ).unwrap();
-            let mut pool = SingleLayoutDescSetPool::new(
-                pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
-            );
-            let descriptor_set = {
-                let mut builder = pool.next();
-                builder.add_buffer(vp_buffer.clone()).unwrap();
-                builder.build().unwrap()
-            };
+            // let vp_buffer = CpuAccessibleBuffer::from_data(
+            //     device.clone(),
+            //     BufferUsage::uniform_buffer_transfer_destination(),
+            //     false,
+            //     pipeline::vs::ty::ViewProjectionData { vp: camera.view() }
+            // ).unwrap();
+            // let mut pool = SingleLayoutDescSetPool::new(
+            //     pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
+            // );
+            // let descriptor_set = {
+            //     let mut builder = pool.next();
+            //     builder.add_buffer(vp_buffer.clone()).unwrap();
+            //     builder.build().unwrap()
+            // };
 
-            builder
-                .begin_render_pass(
-                    framebuffers[image_num].clone(),
-                    SubpassContents::Inline,
-                    clear_values
-                ).unwrap()
-                .set_viewport(0, [viewport.clone()])
-                .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
-                .bind_vertex_buffers(0, vertex_buffer.clone())
-                .bind_descriptor_sets(
-                    PipelineBindPoint::Graphics,
-                    pipeline.graphics_pipeline.layout().clone(),
-                    0,
-                    descriptor_set
-                )
-                .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, player_position_data)
-                .draw(vertex_buffer.len() as u32, 1, 0, 0).unwrap()
-                .bind_vertex_buffers(0, player_buffer.clone())
-                .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, pipeline::vs::ty::PlayerPositionData { player_position: [0.0, 0.0] })
-                .draw(player_buffer.len() as u32, 1, 0, 0).unwrap()
-                .end_render_pass().unwrap();
+            camera.update();
+
+            if camera.get_position()[0].round() as i32 >= world::WIDTH {
+                // Destination reached
+                builder
+                    .begin_render_pass(
+                        framebuffers[image_num].clone(),
+                        SubpassContents::Inline,
+                        destination_values
+                    ).unwrap()
+                    .set_viewport(0, [viewport.clone()])
+                    .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
+                    // .bind_vertex_buffers(0, vertex_buffer.clone())
+                    // .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, player_camera.view())
+                    // .draw(vertex_buffer.len() as u32, 1, 0, 0).unwrap()
+                    .end_render_pass().unwrap();
+            } else {
+                builder
+                    .begin_render_pass(
+                        framebuffers[image_num].clone(),
+                        SubpassContents::Inline,
+                        clear_values
+                    ).unwrap()
+                    .set_viewport(0, [viewport.clone()])
+                    .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
+                    .bind_vertex_buffers(0, vertex_buffer.clone())
+                    // .bind_descriptor_sets(
+                    //     PipelineBindPoint::Graphics,
+                    //     pipeline.graphics_pipeline.layout().clone(),
+                    //     0,
+                    //     descriptor_set
+                    // )
+                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, camera.view())
+                    .draw(vertex_buffer.len() as u32, 1, 0, 0).unwrap()
+                    .bind_vertex_buffers(0, player_buffer.clone())
+                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, player_camera.view())
+                    .draw(player_buffer.len() as u32, 1, 0, 0).unwrap()
+                    .end_render_pass().unwrap();
+            }
             let command_buffer = builder.build().unwrap();
 
             let future = previous_frame_end
