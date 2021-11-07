@@ -1,20 +1,11 @@
-use std::sync::Arc;
-
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
-use vulkano::device::Device;
-use vulkano::buffer::CpuAccessibleBuffer;
 use vulkano::impl_vertex;
-use vulkano::buffer::BufferUsage;
 
 use super::disjoint_set;
+use super::pipeline::cs::ty::Vertex;
 
-#[derive(Default, Debug, Clone)]
-pub struct Vertex {
-    pub position: [f32; 2],
-    pub color: [f32; 3]
-}
 impl_vertex!(Vertex, position, color);
 
 pub const WIDTH: i32 = 10;
@@ -120,12 +111,12 @@ impl World {
         const HALF_SIZE: f32 = 0.2;
         let (x, y) = (0.0, 0.0);
         let data = [
-            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR },
-            Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR },
-            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR },
-            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR },
-            Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR },
-            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR }
+            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
+            Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
+            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
+            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
+            Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
+            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() }
         ].to_vec();
 
         data
@@ -144,12 +135,12 @@ impl World {
                 const HALF_SIZE: f32 = 0.5;
                 let (x, y) = (x as f32, y as f32);
                 [
-                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR },
-                    Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR },
-                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR },
-                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR },
-                    Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR },
-                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR }
+                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
+                    Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
+                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
+                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
+                    Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
+                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR, .. Default::default() }
                 ]
             })
         })
@@ -166,12 +157,12 @@ impl World {
                 let (x, y) = (x as f32 - 0.5, y as f32);
                 match wall {
                     Wall::SolidWall => Some ([
-                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x + HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x - HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR }
+                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x + HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x - HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() }
                         ]),
                     Wall::NoWall => None
                 }
@@ -191,12 +182,12 @@ impl World {
                 let (x, y) = (x as f32, y as f32 - 0.5);
                 match wall {
                     Wall::SolidWall => Some ([
-                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x + HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x - HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR },
-                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR }
+                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x + HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x - HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
+                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() }
                         ]),
                     Wall::NoWall => None
                 }
@@ -220,12 +211,12 @@ impl World {
                 const HALF_SIZE: f32 = 0.1;
                 let (x, y) = (x as f32 - 0.5, y as f32 - 0.5);
                 data.append(&mut [
-                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR },
-                    Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR },
-                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR },
-                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR },
-                    Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR },
-                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR }
+                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
+                    Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
+                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
+                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
+                    Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
+                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR, .. Default::default() }
                 ].to_vec())
             }
         }

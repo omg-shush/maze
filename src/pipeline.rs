@@ -4,7 +4,7 @@ use winit::window::Window;
 
 use vulkano::device::Device;
 use vulkano::swapchain::Swapchain;
-use vulkano::pipeline::GraphicsPipeline;
+use vulkano::pipeline::{ComputePipeline, GraphicsPipeline};
 use vulkano::render_pass::Subpass;
 use vulkano::pipeline::vertex::Vertex;
 use vulkano::render_pass::RenderPass;
@@ -42,16 +42,50 @@ pub mod fs {
     }
 }
 
+pub mod cs {
+    vulkano_shaders::shader! {
+        ty: "compute",
+        src: "
+        #version 450
+        layout(local_size_x = 256) in;
+        struct Vertex {
+            vec2 position;
+            vec3 color;
+        };
+        layout(push_constant) uniform SourceLength {
+            int len;
+        } sl;
+        layout(set = 0, binding = 0) readonly buffer SourceBuffer {
+            Vertex data[];
+        } src;
+        layout(set = 0, binding = 1) buffer DestBuffer {
+            Vertex data[];
+        } dst;
+        void main() {
+            uint i = gl_GlobalInvocationID.x;
+            if (i < sl.len) {
+                dst.data[i] = src.data[i];
+            }
+        }
+        ",
+        types_meta: {
+            #[derive(Clone, Copy, PartialEq, Debug, Default)]
+        }
+    }
+}
+
 pub struct Pipeline {
     pub render_pass: Arc<RenderPass>,
-    pub graphics_pipeline: Arc<GraphicsPipeline>
+    pub graphics_pipeline: Arc<GraphicsPipeline>,
+    pub compute_pipeline: Arc<ComputePipeline>
 }
 
 pub fn compile_shaders<T: Vertex>(
         device: Arc<Device>,
         swapchain: &Swapchain<Window>) -> Pipeline {
-    let vertex_shader = vs::Shader::load(device.clone()).unwrap();
-    let fragment_shader = fs::Shader::load(device.clone()).unwrap();
+    let vertex_shader = vs::Shader::load(device.clone()).expect("Failed to load vertex shader");
+    let fragment_shader = fs::Shader::load(device.clone()).expect("Failed to load fragment shader");
+    let compute_shader = cs::Shader::load(device.clone()).expect("Failed to load compute shader");
 
     let render_pass = Arc::new(
         vulkano::single_pass_renderpass!(
@@ -83,9 +117,9 @@ pub fn compile_shaders<T: Vertex>(
             .unwrap()
     );
 
-    println!("Shaders compiled. {} Descriptor sets, {} Push constants",
-        graphics_pipeline.layout().descriptor_set_layouts().len(),
-        graphics_pipeline.layout().push_constant_ranges().len());
+    let compute_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &compute_shader.main_entry_point(), &(), None, |_| {}).unwrap()
+    );
 
-    Pipeline {render_pass, graphics_pipeline}
+    Pipeline {render_pass, graphics_pipeline, compute_pipeline}
 }

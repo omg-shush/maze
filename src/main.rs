@@ -19,12 +19,14 @@ use vulkano::swapchain;
 use vulkano::swapchain::{Swapchain, AcquireError, SwapchainCreationError};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::{BufferUsage, TypedBufferAccess};
+use vulkano::buffer::{BufferUsage, DeviceLocalBuffer, TypedBufferAccess};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract};
 use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
 use vulkano::pipeline::PipelineBindPoint;
+
+use pipeline::cs::ty::Vertex;
 
 mod world;
 mod pipeline;
@@ -68,7 +70,7 @@ fn main() {
     println!("Created logical vulkan device {:?}", device);
 
     let draw_queue = qs.next().unwrap();
-    let transfer_queue = qs.next().unwrap();
+    let _transfer_queue = qs.next().unwrap();
 
     // Create window
     let event_loop = EventLoop::new();
@@ -84,7 +86,7 @@ fn main() {
     let resolution = surface_caps.max_image_extent;
     let buffers = 2;
     let transform = surface_caps.current_transform;
-    let (format, color_space) = surface_caps.supported_formats[0];
+    let (format, _color_space) = surface_caps.supported_formats[0];
     let usage = ImageUsage {
         color_attachment: true,
         .. ImageUsage::none()
@@ -98,14 +100,15 @@ fn main() {
                                      .build().unwrap();
     println!("Created swapchain {:?}", swapchain);
 
-    // Generate vertex data
+    // Generate world data
     let mut world = world::World::new();
     world.generate_maze();
-    let vertex_buffer = CpuAccessibleBuffer::from_iter(
+    let world_data = world.vertex_buffer();
+    let world_buffer = CpuAccessibleBuffer::from_iter(
         device.clone(),
-        BufferUsage::vertex_buffer(),
+        BufferUsage::storage_buffer(),
         false,
-        world.vertex_buffer()
+        world_data.clone()
     ).expect("Failed to construct buffer");
     let player_buffer = CpuAccessibleBuffer::from_iter(
         device.clone(),
@@ -115,7 +118,49 @@ fn main() {
     ).expect("Failed to construct buffer");
 
     // Compile shader pipeline
-    let pipeline = pipeline::compile_shaders::<world::Vertex>(device.clone(), &swapchain);
+    let pipeline = pipeline::compile_shaders::<pipeline::cs::ty::Vertex>(device.clone(), &swapchain);
+
+    // Use compute shader to elaborate vertex data
+    let vertex_buffer: Arc<DeviceLocalBuffer<[Vertex]>> = DeviceLocalBuffer::array(
+        device.clone(),
+        4096,
+        BufferUsage {
+            storage_buffer: true,
+            vertex_buffer: true,
+            .. BufferUsage::none()
+        },
+        [draw_queue.family()]
+    ).unwrap();
+    let compute_descriptor_set = {
+        let mut pool = SingleLayoutDescSetPool::new(
+            pipeline.compute_pipeline.layout().descriptor_set_layouts()[0].clone()
+        );
+        let mut builder = pool.next();
+        builder.add_buffer(world_buffer.clone()).unwrap();
+        builder.add_buffer(vertex_buffer.clone()).unwrap();
+        builder.build().unwrap()
+    };
+    let mut builder = AutoCommandBufferBuilder::primary(
+        device.clone(),
+        draw_queue.family(),
+        CommandBufferUsage::OneTimeSubmit
+    ).unwrap();
+    builder
+        .bind_pipeline_compute(pipeline.compute_pipeline.clone())
+        .bind_descriptor_sets(
+            PipelineBindPoint::Compute,
+            pipeline.compute_pipeline.layout().clone(),
+            0,
+            compute_descriptor_set
+        )
+        .push_constants(pipeline.compute_pipeline.layout().clone(), 0, pipeline::cs::ty::SourceLength { len: world_data.len() as i32 })
+        .dispatch([(world_data.len() / 256 + 1) as u32, 1, 1])
+        .unwrap();
+    let compute_command_buffer = builder.build().unwrap();
+    sync::now(device.clone())
+        .then_execute(draw_queue.clone(), compute_command_buffer).unwrap()
+        .then_signal_fence_and_flush().unwrap()
+        .wait(None).unwrap();
 
     // Initialize framebuffers
     let dimensions = images[0].dimensions();
