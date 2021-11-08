@@ -11,6 +11,8 @@ use vulkano::render_pass::RenderPass;
 use vulkano::impl_vertex;
 use vulkano::format::Format;
 
+use super::parameters::Params;
+
 pub mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
@@ -170,7 +172,8 @@ pub struct Pipeline {
 
 pub fn compile_shaders<T: Vertex>(
         device: Arc<Device>,
-        swapchain: &Swapchain<Window>) -> Pipeline {
+        swapchain: &Swapchain<Window>,
+        params: &Params) -> Pipeline {
     let vertex_shader = vs::Shader::load(device.clone()).expect("Failed to load vertex shader");
     let fragment_shader = fs::Shader::load(device.clone()).expect("Failed to load fragment shader");
     let compute_shader = cs::Shader::load(device.clone()).expect("Failed to load compute shader");
@@ -179,22 +182,29 @@ pub fn compile_shaders<T: Vertex>(
         vulkano::single_pass_renderpass!(
             device.clone(),
             attachments: {
-                color_value: {
+                msaa_image: {
                     load: Clear,
+                    store: DontCare,
+                    format: swapchain.format(),
+                    samples: params.samples,
+                },
+                color_image: {
+                    load: DontCare,
                     store: Store,
                     format: swapchain.format(),
                     samples: 1,
                 },
-                depth_value: {
+                depth_image: {
                     load: Clear,
                     store: DontCare,
                     format: Format::D16_UNORM,
-                    samples: 1,
+                    samples: params.samples,
                 }
             },
             pass: {
-                color: [color_value],
-                depth_stencil: {depth_value}
+                color: [msaa_image],
+                depth_stencil: {depth_image},
+                resolve: [color_image]
             }
         ).unwrap()
     );

@@ -7,7 +7,7 @@ use vulkano_win::VkSurfaceBuild;
 use winit::event::{Event, KeyboardInput, VirtualKeyCode, WindowEvent, ElementState};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{WindowBuilder};
-use winit::dpi::{PhysicalSize, PhysicalPosition};
+use winit::dpi::{PhysicalPosition, LogicalSize};
 
 use vulkano::device::{Device, Features, DeviceExtensions};
 use vulkano::device::physical::{PhysicalDevice};
@@ -29,11 +29,13 @@ use vulkano::pipeline::PipelineBindPoint;
 use vulkano::format::{ClearValue, Format};
 
 use pipeline::cs::ty::Vertex;
+use parameters::Params;
 
 mod world;
 mod pipeline;
 mod disjoint_set;
 mod camera;
+mod parameters;
 
 fn main() {
     // Create vulkan instance
@@ -77,11 +79,15 @@ fn main() {
     // Create window
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
-        .with_inner_size(PhysicalSize { width: 1600, height: 1600 })
+        .with_inner_size(LogicalSize { width: 800, height: 800 })
         .with_position(PhysicalPosition { x : 300, y: 200 })
         .with_resizable(false)
         .with_title("maze or something i guess")
         .build_vk_surface(&event_loop, instance.clone()).unwrap();
+
+    // Configure parameters
+    let params = Params::new(device.clone());
+    println!("{:?}", params);
 
     // Create swapchain
     let surface_caps = surface.capabilities(card).unwrap();
@@ -120,7 +126,7 @@ fn main() {
     ).expect("Failed to construct buffer");
 
     // Compile shader pipeline
-    let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain);
+    let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
 
     // Use compute shader to elaborate vertex data
     let vertex_buffer: Arc<DeviceLocalBuffer<[Vertex]>> = DeviceLocalBuffer::array(
@@ -175,13 +181,15 @@ fn main() {
         dimensions: [dimensions[0] as f32, dimensions[1] as f32],
         depth_range: 0.0..1.0
     };
-    let dview = ImageView::new(AttachmentImage::transient(device.clone(), dimensions, Format::D16_UNORM).unwrap()).unwrap();
+    let dview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, params.sample_count, Format::D16_UNORM).unwrap()).unwrap();
     let mut framebuffers = images
         .iter()
         .map(|image| {
             let view = ImageView::new(image.clone()).unwrap();
+            let mview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, params.sample_count, format).unwrap()).unwrap();
             Arc::new(
                 Framebuffer::start(pipeline.render_pass.clone())
+                    .add(mview).unwrap()
                     .add(view).unwrap()
                     .add(dview.clone()).unwrap()
                     .build().unwrap()
@@ -281,13 +289,15 @@ fn main() {
                         _ => panic!("Failed to recreate swapchain!")
                     };
                 swapchain = new_swapchain;
-                let dview = ImageView::new(AttachmentImage::transient(device.clone(), dimensions, Format::D16_UNORM).unwrap()).unwrap();
+                let dview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, params.sample_count, Format::D16_UNORM).unwrap()).unwrap();
                 framebuffers = new_images
                     .iter()
                     .map(|image| {
                         let view = ImageView::new(image.clone()).unwrap();
+                        let mview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, params.sample_count, format).unwrap()).unwrap();
                         Arc::new(
                             Framebuffer::start(pipeline.render_pass.clone())
+                                .add(mview).unwrap()
                                 .add(view).unwrap()
                                 .add(dview.clone()).unwrap()
                                 .build().unwrap()
@@ -309,8 +319,8 @@ fn main() {
                 recreate_swapchain = true;
             }
 
-            let clear_values = vec![[0.5, 0.5, 0.85, 1.0].into(), ClearValue::Depth(1.0)];
-            let destination_values = vec![[0.5, 0.85, 0.5, 1.0].into(), ClearValue::Depth(1.0)];
+            let clear_values = vec![[0.5, 0.5, 0.85, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
+            let destination_values = vec![[0.5, 0.85, 0.5, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
             let mut builder = AutoCommandBufferBuilder::primary(
                 device.clone(),
                 draw_queue.family(),
