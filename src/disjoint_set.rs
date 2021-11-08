@@ -41,8 +41,4 @@ impl<T: Eq + Hash + Copy + Debug> DisjointSet<T> {
         }
         top
     }
-
-    pub fn len(&self) -> usize {
-        self.table.len()
-    }
 }

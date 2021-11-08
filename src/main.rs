@@ -15,6 +15,7 @@ use vulkano::instance::{Instance, ApplicationInfo};
 use vulkano::Version;
 use vulkano::image::ImageUsage;
 use vulkano::image::view::ImageView;
+use vulkano::image::attachment::AttachmentImage;
 use vulkano::swapchain;
 use vulkano::swapchain::{Swapchain, AcquireError, SwapchainCreationError};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
@@ -25,6 +26,7 @@ use vulkano::render_pass::{Framebuffer, FramebufferAbstract};
 use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
 use vulkano::pipeline::PipelineBindPoint;
+use vulkano::format::{ClearValue, Format};
 
 use pipeline::cs::ty::Vertex;
 
@@ -118,12 +120,12 @@ fn main() {
     ).expect("Failed to construct buffer");
 
     // Compile shader pipeline
-    let pipeline = pipeline::compile_shaders::<pipeline::cs::ty::Vertex>(device.clone(), &swapchain);
+    let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain);
 
     // Use compute shader to elaborate vertex data
     let vertex_buffer: Arc<DeviceLocalBuffer<[Vertex]>> = DeviceLocalBuffer::array(
         device.clone(),
-        4096,
+        36 * world_buffer.len(), // 6 vertices per rectangle
         BufferUsage {
             storage_buffer: true,
             vertex_buffer: true,
@@ -153,7 +155,11 @@ fn main() {
             0,
             compute_descriptor_set
         )
-        .push_constants(pipeline.compute_pipeline.layout().clone(), 0, pipeline::cs::ty::SourceLength { len: world_data.len() as i32 })
+        .push_constants(
+            pipeline.compute_pipeline.layout().clone(),
+            0,
+            pipeline::cs::ty::SourceLength { len: world_data.len() as i32 }
+        )
         .dispatch([(world_data.len() / 256 + 1) as u32, 1, 1])
         .unwrap();
     let compute_command_buffer = builder.build().unwrap();
@@ -169,16 +175,16 @@ fn main() {
         dimensions: [dimensions[0] as f32, dimensions[1] as f32],
         depth_range: 0.0..1.0
     };
+    let dview = ImageView::new(AttachmentImage::transient(device.clone(), dimensions, Format::D16_UNORM).unwrap()).unwrap();
     let mut framebuffers = images
         .iter()
         .map(|image| {
             let view = ImageView::new(image.clone()).unwrap();
             Arc::new(
                 Framebuffer::start(pipeline.render_pass.clone())
-                    .add(view)
-                    .unwrap()
-                    .build()
-                    .unwrap()
+                    .add(view).unwrap()
+                    .add(dview.clone()).unwrap()
+                    .build().unwrap()
             ) as Arc<dyn FramebufferAbstract + Send + Sync>
         }).collect::<Vec<_>>();
 
@@ -187,8 +193,12 @@ fn main() {
 
     let mut camera = camera::Camera::new();
     let mut player_camera = camera::Camera::new();
-    camera.scale([0.1, 0.1, 0.1]);
-    player_camera.scale([0.1, 0.1, 0.1]);
+    camera.position([0.0, 0.0, 4.0]);
+    camera.turn([15.0f32.to_radians(), 0.0, 0.0]);
+    player_camera.position([0.0, 0.0, 4.0]);
+    player_camera.turn([15.0f32.to_radians(), 0.0, 0.0]);
+
+    let (mut player_x, mut player_y) = (0, 0);
 
     // Up, down, left, right
     let mut keys = [ElementState::Released; 4];
@@ -214,36 +224,39 @@ fn main() {
         } => {
             let speed = 1.0;
             let seconds = 0.5;
-            let pos = camera.get_position().map(|f| f.round() as i32);
             match keycode {
                 VirtualKeyCode::W | VirtualKeyCode::Up => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([pos[0], pos[1]], [pos[0], pos[1] - 1]) {
+                        if world.check_move([player_x, player_y], [player_x, player_y - 1]) {
                             camera.adjust([0.0, -1.0, 0.0], seconds, speed);
+                            player_y -= 1;
                         }
                     }
                     keys[0] = state;
                 },
                 VirtualKeyCode::S | VirtualKeyCode::Down => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([pos[0], pos[1]], [pos[0], pos[1] + 1]) {
+                        if world.check_move([player_x, player_y], [player_x, player_y + 1]) {
                             camera.adjust([0.0, 1.0, 0.0], seconds, speed);
+                            player_y += 1;
                         }
                     }
                     keys[1] = state
                 },
                 VirtualKeyCode::A | VirtualKeyCode::Left => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([pos[0], pos[1]], [pos[0] - 1, pos[1]]) {
+                        if world.check_move([player_x, player_y], [player_x - 1, player_y]) {
                             camera.adjust([-1.0, 0.0, 0.0], seconds, speed);
+                            player_x -= 1;
                         }
                     }
                     keys[2] = state
                 },
                 VirtualKeyCode::D | VirtualKeyCode::Right => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([pos[0], pos[1]], [pos[0] + 1, pos[1]]) {
+                        if world.check_move([player_x, player_y], [player_x + 1, player_y]) {
                             camera.adjust([1.0, 0.0, 0.0], seconds, speed);
+                            player_x += 1;
                         }
                     }
                     keys[3] = state
@@ -268,16 +281,16 @@ fn main() {
                         _ => panic!("Failed to recreate swapchain!")
                     };
                 swapchain = new_swapchain;
+                let dview = ImageView::new(AttachmentImage::transient(device.clone(), dimensions, Format::D16_UNORM).unwrap()).unwrap();
                 framebuffers = new_images
                     .iter()
                     .map(|image| {
                         let view = ImageView::new(image.clone()).unwrap();
                         Arc::new(
                             Framebuffer::start(pipeline.render_pass.clone())
-                                .add(view)
-                                .unwrap()
-                                .build()
-                                .unwrap()
+                                .add(view).unwrap()
+                                .add(dview.clone()).unwrap()
+                                .build().unwrap()
                         ) as Arc<dyn FramebufferAbstract + Send + Sync>
                     }).collect::<Vec<_>>();
                 recreate_swapchain = false;
@@ -296,8 +309,8 @@ fn main() {
                 recreate_swapchain = true;
             }
 
-            let clear_values = vec![[0.5, 0.5, 0.85, 1.0].into()];
-            let destination_values = vec![[0.5, 0.85, 0.5, 1.0].into()];
+            let clear_values = vec![[0.5, 0.5, 0.85, 1.0].into(), ClearValue::Depth(1.0)];
+            let destination_values = vec![[0.5, 0.85, 0.5, 1.0].into(), ClearValue::Depth(1.0)];
             let mut builder = AutoCommandBufferBuilder::primary(
                 device.clone(),
                 draw_queue.family(),
@@ -322,7 +335,7 @@ fn main() {
 
             camera.update();
 
-            if camera.get_position()[0].round() as i32 >= world::WIDTH {
+            if player_x >= world::WIDTH {
                 // Destination reached
                 builder
                     .begin_render_pass(
@@ -352,10 +365,10 @@ fn main() {
                     //     0,
                     //     descriptor_set
                     // )
-                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, camera.view())
+                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, pipeline::vs::ty::ViewProjectionData { vp: camera::mul(camera.projection(), camera.view()) })
                     .draw(vertex_buffer.len() as u32, 1, 0, 0).unwrap()
                     .bind_vertex_buffers(0, player_buffer.clone())
-                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, player_camera.view())
+                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, camera::mul(player_camera.projection(), player_camera.view()))
                     .draw(player_buffer.len() as u32, 1, 0, 0).unwrap()
                     .end_render_pass().unwrap();
             }

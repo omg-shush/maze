@@ -1,12 +1,8 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
-use vulkano::impl_vertex;
-
 use super::disjoint_set;
-use super::pipeline::cs::ty::Vertex;
-
-impl_vertex!(Vertex, position, color);
+use super::pipeline::cs::ty::{Rectangle, Vertex};
 
 pub const WIDTH: i32 = 10;
 pub const HEIGHT: i32 = 10;
@@ -110,41 +106,30 @@ impl World {
         const PLAYER_COLOR: [f32; 3] = [ 0.2, 0.2, 0.8 ];
         const HALF_SIZE: f32 = 0.2;
         let (x, y) = (0.0, 0.0);
-        let data = [
-            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
-            Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
-            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
-            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
-            Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() },
-            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: PLAYER_COLOR, .. Default::default() }
-        ].to_vec();
-
-        data
+        [
+            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
+            Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
+            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
+            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
+            Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
+            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() }
+        ].to_vec()
     }
 
-    pub fn vertex_buffer(&self) -> Vec<Vertex> {
+    pub fn vertex_buffer(&self) -> Vec<Rectangle> {
         // Generate vertex data for maze
         const CELL_COLOR: [f32; 3] = [ 0.9, 0.5, 0.5 ];
-        const WALL_COLOR: [f32; 3] = [ 0.0, 0.0, 0.0 ];
-        let mut data: Vec<Vertex> = Vec::new();
+        const WALL_COLOR: [f32; 3] = [ 0.0, 0.0, 0.8 ];
+        let mut data: Vec<Rectangle> = Vec::new();
 
-        // Map cells to squares
+        // // Map cells to squares
         data.append(&mut self.cells.iter().enumerate().map(|(y, row)| {
             row.iter().enumerate().map(move |(x, _cell)| {
                 // Draw a square around cell (x, y)
-                const HALF_SIZE: f32 = 0.5;
                 let (x, y) = (x as f32, y as f32);
-                [
-                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
-                    Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
-                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
-                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
-                    Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR, .. Default::default() },
-                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: CELL_COLOR, .. Default::default() }
-                ]
+                Rectangle { position: [x, y], color: CELL_COLOR, width: 1.0, height: 1.0, depth: 0.1, .. Default::default() }
             })
         })
-        .flatten()
         .flatten()
         .collect::<Vec<_>>());
 
@@ -152,24 +137,16 @@ impl World {
         data.append(&mut self.xwalls.iter().enumerate().map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, wall)| {
                 // Draw a wall between cells (x - 1, y) and (x, y)
-                const HALF_WIDTH: f32 = 0.1;
-                const HALF_HEIGHT: f32 = 0.4;
                 let (x, y) = (x as f32 - 0.5, y as f32);
                 match wall {
-                    Wall::SolidWall => Some ([
-                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x + HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x - HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() }
-                        ]),
+                    Wall::SolidWall => Some (
+                            Rectangle { position: [x, y], color: WALL_COLOR, width: 0.2, height: 0.8, depth: 1.0, .. Default::default() }
+                        ),
                     Wall::NoWall => None
                 }
                 
             })
         })
-        .flatten()
         .flatten()
         .collect::<Vec<_>>());
 
@@ -177,23 +154,15 @@ impl World {
         data.append(&mut self.ywalls.iter().enumerate().map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, wall)| {
                 // Draw a wall between cells (x, y - 1) and (x, y)
-                const HALF_WIDTH: f32 = 0.4;
-                const HALF_HEIGHT: f32 = 0.1;
                 let (x, y) = (x as f32, y as f32 - 0.5);
                 match wall {
-                    Wall::SolidWall => Some ([
-                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x + HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x - HALF_WIDTH, y - HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x - HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() },
-                            Vertex { position: [ x + HALF_WIDTH, y + HALF_HEIGHT ], color: WALL_COLOR, .. Default::default() }
-                        ]),
+                    Wall::SolidWall => Some (
+                            Rectangle { position: [x, y], color: WALL_COLOR, width: 0.8, height: 0.2, depth: 1.0, .. Default::default() }
+                        ),
                     Wall::NoWall => None
                 }
             })
         })
-        .flatten()
         .flatten()
         .collect::<Vec<_>>());
 
@@ -208,16 +177,8 @@ impl World {
                 //    world.ywalls[yu][xu + 1] == Wall::SolidWall {
 
                 // Draw a wall corner between cells [x - 1, y - 1] and [x, y]
-                const HALF_SIZE: f32 = 0.1;
                 let (x, y) = (x as f32 - 0.5, y as f32 - 0.5);
-                data.append(&mut [
-                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
-                    Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
-                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
-                    Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
-                    Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR, .. Default::default() },
-                    Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE ], color: WALL_COLOR, .. Default::default() }
-                ].to_vec())
+                data.push(Rectangle { position: [x, y], color: WALL_COLOR, width: 0.2, height: 0.2, depth: 1.0, .. Default::default() });
             }
         }
 

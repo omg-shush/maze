@@ -8,21 +8,26 @@ use vulkano::pipeline::{ComputePipeline, GraphicsPipeline};
 use vulkano::render_pass::Subpass;
 use vulkano::pipeline::vertex::Vertex;
 use vulkano::render_pass::RenderPass;
+use vulkano::impl_vertex;
+use vulkano::format::Format;
 
 pub mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
         src: "
         #version 450
-        layout(location = 0) in vec2 position;
+        layout(location = 0) in vec3 position;
         layout(location = 1) in vec3 color;
+        layout(location = 2) in vec3 normal;
         layout(push_constant) uniform ViewProjectionData {
             mat4 vp;
         } vpd;
         layout(location = 0) out vec3 passColor;
+        layout(location = 1) out vec3 passNormal;
         void main() {
-            gl_Position = vpd.vp * vec4(position, 0.0, 1.0);
+            gl_Position = vpd.vp * vec4(position, 1.0);
             passColor = color;
+            passNormal = normal;
         }
         "
     }
@@ -33,10 +38,13 @@ pub mod fs {
         ty: "fragment",
         src: "
         #version 450
-        layout(location = 0) in vec3 passColor;
+        layout(location = 0) in vec3 color;
+        layout(location = 1) in vec3 normal;
         layout(location = 0) out vec4 f_color;
         void main() {
-            f_color = vec4(passColor, 1.0);
+            vec3 directional_light = normalize(vec3(-2, -1, -1));
+            float brightness = 0.2 + 0.8 * clamp(dot(normal, -directional_light), 0.0, 1.0);
+            f_color = vec4(color * brightness, 1.0);
         }
         "
     }
@@ -48,23 +56,100 @@ pub mod cs {
         src: "
         #version 450
         layout(local_size_x = 256) in;
-        struct Vertex {
+        struct Rectangle {
             vec2 position;
             vec3 color;
+            float width;
+            float height;
+            float depth;
+        };
+        struct Vertex {
+            vec3 position;
+            vec3 color;
+            vec3 normal;
         };
         layout(push_constant) uniform SourceLength {
             int len;
         } sl;
         layout(set = 0, binding = 0) readonly buffer SourceBuffer {
-            Vertex data[];
+            Rectangle data[];
         } src;
         layout(set = 0, binding = 1) buffer DestBuffer {
             Vertex data[];
         } dst;
         void main() {
+            // Called once per rectangular prism
             uint i = gl_GlobalInvocationID.x;
+            Rectangle wall = src.data[i];
+            uint per = 36;
             if (i < sl.len) {
-                dst.data[i] = src.data[i];
+                // Bottom
+                dst.data[i * per +  0].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per +  1].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per +  2].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per +  3].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per +  4].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per +  5].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                
+                // Top
+                dst.data[i * per +  6].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per +  7].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per +  8].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per +  9].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 10].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 11].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+
+                // Front
+                dst.data[i * per + 12].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 13].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 14].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 15].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 16].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 17].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+
+                // Back
+                dst.data[i * per + 18].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 19].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 20].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 21].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 22].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 23].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+
+                // Right
+                dst.data[i * per + 24].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 25].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 26].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 27].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 28].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 29].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+
+                // Left
+                dst.data[i * per + 30].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 31].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 32].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 33].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 34].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 35].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+            }
+            for (int j = 0; j < 12; j++) {
+                dst.data[i * per + j].color = wall.color;
+                dst.data[i * per + j].normal = vec3(0.0, 0.0, 1.0);;
+            }
+            for (int j = 12; j < 18; j++) { // -y
+                dst.data[i * per + j].color = wall.color;
+                dst.data[i * per + j].normal = vec3(0.0, -1.0, 0.0);;
+            }
+            for (int j = 18; j < 24; j++) { // +y
+                dst.data[i * per + j].color = wall.color;
+                dst.data[i * per + j].normal = vec3(0.0, 1.0, 0.0);;
+            }
+            for (int j = 24; j < 30; j++) { // +x
+                dst.data[i * per + j].color = wall.color;
+                dst.data[i * per + j].normal = vec3(1.0, 0.0, 0.0);;
+            }
+            for (int j = 30; j < 36; j++) { // -x
+                dst.data[i * per + j].color = wall.color;
+                dst.data[i * per + j].normal = vec3(-1.0, 0.0, 0.0);;
             }
         }
         ",
@@ -73,6 +158,9 @@ pub mod cs {
         }
     }
 }
+
+impl_vertex!(cs::ty::Rectangle, position, color, width, height);
+impl_vertex!(cs::ty::Vertex, position, color, normal);
 
 pub struct Pipeline {
     pub render_pass: Arc<RenderPass>,
@@ -96,11 +184,17 @@ pub fn compile_shaders<T: Vertex>(
                     store: Store,
                     format: swapchain.format(),
                     samples: 1,
+                },
+                depth_value: {
+                    load: Clear,
+                    store: DontCare,
+                    format: Format::D16_UNORM,
+                    samples: 1,
                 }
             },
             pass: {
                 color: [color_value],
-                depth_stencil: {}
+                depth_stencil: {depth_value}
             }
         ).unwrap()
     );
@@ -110,6 +204,7 @@ pub fn compile_shaders<T: Vertex>(
             .vertex_input_single_buffer::<T>()
             .vertex_shader(vertex_shader.main_entry_point(), ())
             .fragment_shader(fragment_shader.main_entry_point(), ())
+            .depth_stencil_simple_depth()
             .triangle_list()
             .viewports_dynamic_scissors_irrelevant(1)
             .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
