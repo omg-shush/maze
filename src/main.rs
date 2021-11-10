@@ -32,6 +32,7 @@ use pipeline::cs::ty::Vertex;
 use parameters::Params;
 use player::Player;
 use pipeline::vs::ty::ViewProjectionData;
+use pipeline::cs::ty::Rectangle;
 
 mod world;
 mod pipeline;
@@ -112,16 +113,21 @@ fn main() {
                                      .build().unwrap();
     println!("Created swapchain {:?}", swapchain);
 
+    // Compile shader pipeline
+    let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
+
     // Generate world data
     let mut world = world::World::new();
     world.generate_maze();
-    let world_data = world.vertex_buffer();
-    let world_buffer = CpuAccessibleBuffer::from_iter(
-        device.clone(),
-        BufferUsage::storage_buffer(),
-        false,
-        world_data.clone()
-    ).expect("Failed to construct buffer");
+    let world_data: Vec<Vec<Rectangle>> = (0..world::DEPTH).map(|level| world.vertex_buffer(level)).collect();
+    let world_buffer: Vec<Arc<CpuAccessibleBuffer<[Rectangle]>>> = world_data.into_iter().map(|level| {
+        CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::storage_buffer(),
+            false,
+            level
+        ).expect("Failed to construct buffer")
+    }).collect();
     let player_buffer = CpuAccessibleBuffer::from_iter(
         device.clone(),
         BufferUsage::vertex_buffer(),
@@ -129,49 +135,52 @@ fn main() {
         world.player_buffer()
     ).expect("Failed to construct buffer");
 
-    // Compile shader pipeline
-    let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
-
     // Use compute shader to elaborate vertex data
-    let vertex_buffer: Arc<DeviceLocalBuffer<[Vertex]>> = DeviceLocalBuffer::array(
-        device.clone(),
-        36 * world_buffer.len(), // 6 vertices per rectangle
-        BufferUsage {
-            storage_buffer: true,
-            vertex_buffer: true,
-            .. BufferUsage::none()
-        },
-        [draw_queue.family()]
-    ).unwrap();
-    let compute_descriptor_set = {
-        let mut pool = SingleLayoutDescSetPool::new(
-            pipeline.compute_pipeline.layout().descriptor_set_layouts()[0].clone()
-        );
-        let mut builder = pool.next();
-        builder.add_buffer(world_buffer.clone()).unwrap();
-        builder.add_buffer(vertex_buffer.clone()).unwrap();
-        builder.build().unwrap()
-    };
+    let vertex_buffer: Vec<Arc<DeviceLocalBuffer<[Vertex]>>> = world_buffer.iter().map(|level_buffer| {
+        DeviceLocalBuffer::array(
+            device.clone(),
+            36 * level_buffer.len() as u64, // 6 vertices per rectangle, 6 rectangles per box
+            BufferUsage {
+                storage_buffer: true,
+                vertex_buffer: true,
+                .. BufferUsage::none()
+            },
+            [draw_queue.family()]
+        ).unwrap()
+    }).collect();
+
     let mut builder = AutoCommandBufferBuilder::primary(
         device.clone(),
         draw_queue.family(),
         CommandBufferUsage::OneTimeSubmit
     ).unwrap();
-    builder
-        .bind_pipeline_compute(pipeline.compute_pipeline.clone())
-        .bind_descriptor_sets(
-            PipelineBindPoint::Compute,
-            pipeline.compute_pipeline.layout().clone(),
-            0,
-            compute_descriptor_set
-        )
-        .push_constants(
-            pipeline.compute_pipeline.layout().clone(),
-            0,
-            pipeline::cs::ty::SourceLength { len: world_data.len() as i32 }
-        )
-        .dispatch([(world_data.len() / 256 + 1) as u32, 1, 1])
-        .unwrap();
+    builder.bind_pipeline_compute(pipeline.compute_pipeline.clone());
+    let mut compute_desc_set_pool = SingleLayoutDescSetPool::new(
+        pipeline.compute_pipeline.layout().descriptor_set_layouts()[0].clone()
+    );
+    for level in 0..world::DEPTH {
+        let input_len = world_buffer[level].len() as u32;
+        let compute_descriptor_set = {
+            let mut builder = compute_desc_set_pool.next();
+            builder.add_buffer(world_buffer[level].clone()).unwrap();
+            builder.add_buffer(vertex_buffer[level].clone()).unwrap();
+            builder.build().unwrap()
+        };
+        builder
+            .bind_descriptor_sets(
+                PipelineBindPoint::Compute,
+                pipeline.compute_pipeline.layout().clone(),
+                0,
+                compute_descriptor_set
+            )
+            .push_constants(
+                pipeline.compute_pipeline.layout().clone(),
+                0,
+                pipeline::cs::ty::SourceLength { len: input_len }
+            )
+            .dispatch([input_len / 256 + 1, 1, 1])
+            .unwrap();
+    }
     let compute_command_buffer = builder.build().unwrap();
     sync::now(device.clone())
         .then_execute(draw_queue.clone(), compute_command_buffer).unwrap()
@@ -208,8 +217,8 @@ fn main() {
 
     let mut player = Player::new();
 
-    // Up, down, left, right
-    let mut keys = [ElementState::Released; 4];
+    // Up, down, left, right, ascend, descend
+    let mut keys = [ElementState::Released; 6];
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -236,35 +245,51 @@ fn main() {
             match keycode {
                 VirtualKeyCode::W | VirtualKeyCode::Up => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([player.cell()[0], player.cell()[1]], [player.cell()[0], player.cell()[1] - 1]) {
+                        if world.check_move(player.cell(), [0, -1, 0]) {
                             player.move_position([0, -1, 0], 0.5);
                         }
                     }
                     keys[0] = state;
                 },
                 VirtualKeyCode::S | VirtualKeyCode::Down => {
-                    if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([player.cell()[0], player.cell()[1]], [player.cell()[0], player.cell()[1] + 1]) {
+                    if state == ElementState::Pressed && keys[1] == ElementState::Released {
+                        if world.check_move(player.cell(), [0, 1, 0]) {
                             player.move_position([0, 1, 0], 0.5);
                         }
                     }
                     keys[1] = state
                 },
                 VirtualKeyCode::A | VirtualKeyCode::Left => {
-                    if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([player.cell()[0], player.cell()[1]], [player.cell()[0] - 1, player.cell()[1]]) {
+                    if state == ElementState::Pressed && keys[2] == ElementState::Released {
+                        if world.check_move(player.cell(), [-1, 0, 0]) {
                             player.move_position([-1, 0, 0], 0.5);
                         }
                     }
                     keys[2] = state
                 },
                 VirtualKeyCode::D | VirtualKeyCode::Right => {
-                    if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([player.cell()[0], player.cell()[1]], [player.cell()[0] + 1, player.cell()[1]]) {
+                    if state == ElementState::Pressed && keys[3] == ElementState::Released {
+                        if world.check_move(player.cell(), [1, 0, 0]) {
                             player.move_position([1, 0, 0], 0.5);
                         }
                     }
                     keys[3] = state
+                },
+                VirtualKeyCode::Space => {
+                    if state == ElementState::Pressed && keys[4] == ElementState::Released {
+                        if world.check_move(player.cell(), [0, 0, 1]) {
+                            player.move_position([0, 0, 1], 0.5);
+                        }
+                    }
+                    keys[4] = state
+                },
+                VirtualKeyCode::LControl => {
+                    if state == ElementState::Pressed && keys[5] == ElementState::Released {
+                        if world.check_move(player.cell(), [0, 0, -1]) {
+                            player.move_position([0, 0, -1], 0.5);
+                        }
+                    }
+                    keys[5] = state
                 },
                 _ => {}
             }
@@ -330,7 +355,7 @@ fn main() {
                 BufferUsage::uniform_buffer_transfer_destination(),
                 false,
                 pipeline::fs::ty::PlayerPositionData { pos: {
-                    let mut p = player.get_position().map(|i| i as f32);
+                    let mut p = player.get_position();
                     p[2] += 0.8;
                     p
                 } }
@@ -387,15 +412,21 @@ fn main() {
                     ).unwrap()
                     .set_viewport(0, [viewport.clone()])
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
-                    .bind_vertex_buffers(0, vertex_buffer.clone())
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         pipeline.graphics_pipeline.layout().clone(),
                         0,
                         world_descriptor_set
                     )
-                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection)
-                    .draw(vertex_buffer.len() as u32, 1, 0, 0).unwrap()
+                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection);
+
+                for level in 0..(player.cell()[2] + 1) as usize {
+                    builder
+                        .bind_vertex_buffers(0, vertex_buffer[level].clone())
+                        .draw(vertex_buffer[level].len() as u32, 1, 0, 0).unwrap();
+                }
+                
+                builder
                     .bind_vertex_buffers(0, player_buffer.clone())
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,

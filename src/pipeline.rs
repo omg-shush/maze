@@ -51,12 +51,12 @@ pub mod fs {
         layout(location = 0) out vec4 f_color;
         void main() {
             vec3 directional_light = normalize(vec3(-2, -1, -1));
-            float ambient = 0.001;
-            float directional = 0.049 * clamp(dot(normal, -directional_light), 0.0, 1.0);
+            float ambient = 0.01;
+            float directional = 0.39 * clamp(dot(normal, -directional_light), 0.0, 1.0);
             float distance2 = length(ppd.pos - position);
             distance2 *= distance2;
             float point = clamp((1.0 / distance2) * clamp(dot(normal, ppd.pos - position), 0.0, 1.0), 0.0, 1.0);
-            point = 0.95 * point;
+            point = 0.6 * point;
             float brightness = ambient + directional + point;
             f_color = vec4(color * brightness, 1.0);
         }
@@ -71,7 +71,7 @@ pub mod cs {
         #version 450
         layout(local_size_x = 256) in;
         struct Rectangle {
-            vec2 position;
+            vec3 position;
             vec3 color;
             float width;
             float height;
@@ -83,7 +83,7 @@ pub mod cs {
             vec3 normal;
         };
         layout(push_constant) uniform SourceLength {
-            int len;
+            uint len;
         } sl;
         layout(set = 0, binding = 0) readonly buffer SourceBuffer {
             Rectangle data[];
@@ -98,52 +98,52 @@ pub mod cs {
             uint per = 36;
             if (i < sl.len) {
                 // Bottom
-                dst.data[i * per +  0].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
-                dst.data[i * per +  1].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per +  2].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per +  3].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per +  4].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
-                dst.data[i * per +  5].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per +  0].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per +  1].position = wall.position + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per +  2].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per +  3].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per +  4].position = wall.position + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per +  5].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
                 
                 // Top
-                dst.data[i * per +  6].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
-                dst.data[i * per +  7].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
-                dst.data[i * per +  8].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
-                dst.data[i * per +  9].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
-                dst.data[i * per + 10].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
-                dst.data[i * per + 11].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per +  6].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per +  7].position = wall.position + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per +  8].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per +  9].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 10].position = wall.position + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 11].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
 
                 // Front
-                dst.data[i * per + 12].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
-                dst.data[i * per + 13].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per + 14].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per + 15].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per + 16].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
-                dst.data[i * per + 17].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 12].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 13].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 14].position = wall.position + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 15].position = wall.position + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 16].position = wall.position + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 17].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
 
                 // Back
-                dst.data[i * per + 18].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
-                dst.data[i * per + 19].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
-                dst.data[i * per + 20].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
-                dst.data[i * per + 21].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
-                dst.data[i * per + 22].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
-                dst.data[i * per + 23].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 18].position = wall.position + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 19].position = wall.position + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 20].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 21].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 22].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 23].position = wall.position + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
 
                 // Right
-                dst.data[i * per + 24].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
-                dst.data[i * per + 25].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
-                dst.data[i * per + 26].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per + 27].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per + 28].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
-                dst.data[i * per + 29].position = vec3(wall.position, 0.0) + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 24].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 25].position = wall.position + vec3(wall.width / 2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 26].position = wall.position + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 27].position = wall.position + vec3(wall.width / 2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 28].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 29].position = wall.position + vec3(wall.width / 2.0, wall.height / 2.0, wall.depth);
 
                 // Left
-                dst.data[i * per + 30].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
-                dst.data[i * per + 31].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
-                dst.data[i * per + 32].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per + 33].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
-                dst.data[i * per + 34].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
-                dst.data[i * per + 35].position = vec3(wall.position, 0.0) + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 30].position = wall.position + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
+                dst.data[i * per + 31].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, wall.depth);
+                dst.data[i * per + 32].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 33].position = wall.position + vec3(wall.width / -2.0, wall.height / -2.0, 0.0);
+                dst.data[i * per + 34].position = wall.position + vec3(wall.width / -2.0, wall.height / 2.0, 0.0);
+                dst.data[i * per + 35].position = wall.position + vec3(wall.width / -2.0, wall.height / 2.0, wall.depth);
             }
             for (int j = 0; j < 12; j++) {
                 dst.data[i * per + j].color = wall.color;
