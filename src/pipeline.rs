@@ -24,10 +24,12 @@ pub mod vs {
         layout(push_constant) uniform ViewProjectionData {
             mat4 vp;
         } vpd;
-        layout(location = 0) out vec3 passColor;
-        layout(location = 1) out vec3 passNormal;
+        layout(location = 0) out vec3 passPosition;
+        layout(location = 1) out vec3 passColor;
+        layout(location = 2) out vec3 passNormal;
         void main() {
             gl_Position = vpd.vp * vec4(position, 1.0);
+            passPosition = position;
             passColor = color;
             passNormal = normal;
         }
@@ -40,12 +42,22 @@ pub mod fs {
         ty: "fragment",
         src: "
         #version 450
-        layout(location = 0) in vec3 color;
-        layout(location = 1) in vec3 normal;
+        layout(location = 0) in vec3 position;
+        layout(location = 1) in vec3 color;
+        layout(location = 2) in vec3 normal;
+        layout(set = 0, binding = 0) uniform PlayerPositionData {
+            vec3 pos;
+        } ppd;
         layout(location = 0) out vec4 f_color;
         void main() {
             vec3 directional_light = normalize(vec3(-2, -1, -1));
-            float brightness = 0.2 + 0.8 * clamp(dot(normal, -directional_light), 0.0, 1.0);
+            float ambient = 0.001;
+            float directional = 0.049 * clamp(dot(normal, -directional_light), 0.0, 1.0);
+            float distance2 = length(ppd.pos - position);
+            distance2 *= distance2;
+            float point = clamp((1.0 / distance2) * clamp(dot(normal, ppd.pos - position), 0.0, 1.0), 0.0, 1.0);
+            point = 0.95 * point;
+            float brightness = ambient + directional + point;
             f_color = vec4(color * brightness, 1.0);
         }
         "

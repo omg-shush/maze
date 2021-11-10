@@ -166,16 +166,9 @@ impl World {
         .flatten()
         .collect::<Vec<_>>());
 
-        // Generate wall corners, if at least one adjacent x- or y- wall is solid
+        // Generate wall corners
         for x in 0..WIDTH + 1 {
             for y in 0..HEIGHT + 1 {
-                // let (xu, yu) = (x as usize, y as usize);
-                // if x == 0 || x == WIDTH - 1 || y == 0 || y == HEIGHT - 1 ||
-                //    world.xwalls[yu][xu] == Wall::SolidWall ||
-                //    world.xwalls[yu + 1][xu] == Wall::SolidWall ||
-                //    world.ywalls[yu][xu] == Wall::SolidWall ||
-                //    world.ywalls[yu][xu + 1] == Wall::SolidWall {
-
                 // Draw a wall corner between cells [x - 1, y - 1] and [x, y]
                 let (x, y) = (x as f32 - 0.5, y as f32 - 0.5);
                 data.push(Rectangle { position: [x, y], color: WALL_COLOR, width: 0.2, height: 0.2, depth: 1.0, .. Default::default() });

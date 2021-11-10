@@ -30,12 +30,16 @@ use vulkano::format::{ClearValue, Format};
 
 use pipeline::cs::ty::Vertex;
 use parameters::Params;
+use player::Player;
+use pipeline::vs::ty::ViewProjectionData;
 
 mod world;
 mod pipeline;
 mod disjoint_set;
 mod camera;
 mod parameters;
+mod player;
+mod linalg;
 
 fn main() {
     // Create vulkan instance
@@ -198,15 +202,11 @@ fn main() {
 
     let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
     let mut recreate_swapchain = false;
+    let mut desc_set_pool = SingleLayoutDescSetPool::new(
+        pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
+    );
 
-    let mut camera = camera::Camera::new();
-    let mut player_camera = camera::Camera::new();
-    camera.position([0.0, 0.0, 4.0]);
-    camera.turn([15.0f32.to_radians(), 0.0, 0.0]);
-    player_camera.position([0.0, 0.0, 4.0]);
-    player_camera.turn([15.0f32.to_radians(), 0.0, 0.0]);
-
-    let (mut player_x, mut player_y) = (0, 0);
+    let mut player = Player::new();
 
     // Up, down, left, right
     let mut keys = [ElementState::Released; 4];
@@ -230,41 +230,38 @@ fn main() {
                 }, ..
             }, ..
         } => {
-            let speed = 1.0;
-            let seconds = 0.5;
+            if player.complete {
+                return;
+            }
             match keycode {
                 VirtualKeyCode::W | VirtualKeyCode::Up => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([player_x, player_y], [player_x, player_y - 1]) {
-                            camera.adjust([0.0, -1.0, 0.0], seconds, speed);
-                            player_y -= 1;
+                        if world.check_move([player.cell()[0], player.cell()[1]], [player.cell()[0], player.cell()[1] - 1]) {
+                            player.move_position([0, -1, 0], 0.5);
                         }
                     }
                     keys[0] = state;
                 },
                 VirtualKeyCode::S | VirtualKeyCode::Down => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([player_x, player_y], [player_x, player_y + 1]) {
-                            camera.adjust([0.0, 1.0, 0.0], seconds, speed);
-                            player_y += 1;
+                        if world.check_move([player.cell()[0], player.cell()[1]], [player.cell()[0], player.cell()[1] + 1]) {
+                            player.move_position([0, 1, 0], 0.5);
                         }
                     }
                     keys[1] = state
                 },
                 VirtualKeyCode::A | VirtualKeyCode::Left => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([player_x, player_y], [player_x - 1, player_y]) {
-                            camera.adjust([-1.0, 0.0, 0.0], seconds, speed);
-                            player_x -= 1;
+                        if world.check_move([player.cell()[0], player.cell()[1]], [player.cell()[0] - 1, player.cell()[1]]) {
+                            player.move_position([-1, 0, 0], 0.5);
                         }
                     }
                     keys[2] = state
                 },
                 VirtualKeyCode::D | VirtualKeyCode::Right => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move([player_x, player_y], [player_x + 1, player_y]) {
-                            camera.adjust([1.0, 0.0, 0.0], seconds, speed);
-                            player_x += 1;
+                        if world.check_move([player.cell()[0], player.cell()[1]], [player.cell()[0] + 1, player.cell()[1]]) {
+                            player.move_position([1, 0, 0], 0.5);
                         }
                     }
                     keys[3] = state
@@ -319,8 +316,8 @@ fn main() {
                 recreate_swapchain = true;
             }
 
-            let clear_values = vec![[0.5, 0.5, 0.85, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
-            let destination_values = vec![[0.5, 0.85, 0.5, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
+            let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
+            let destination_values = vec![[0.4, 0.85, 0.4, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
             let mut builder = AutoCommandBufferBuilder::primary(
                 device.clone(),
                 draw_queue.family(),
@@ -328,24 +325,49 @@ fn main() {
             ).unwrap();
 
             // Update uniforms
-            // let vp_buffer = CpuAccessibleBuffer::from_data(
-            //     device.clone(),
-            //     BufferUsage::uniform_buffer_transfer_destination(),
-            //     false,
-            //     pipeline::vs::ty::ViewProjectionData { vp: camera.view() }
-            // ).unwrap();
-            // let mut pool = SingleLayoutDescSetPool::new(
-            //     pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
-            // );
-            // let descriptor_set = {
-            //     let mut builder = pool.next();
-            //     builder.add_buffer(vp_buffer.clone()).unwrap();
-            //     builder.build().unwrap()
-            // };
+            let ppd_buffer = CpuAccessibleBuffer::from_data(
+                device.clone(),
+                BufferUsage::uniform_buffer_transfer_destination(),
+                false,
+                pipeline::fs::ty::PlayerPositionData { pos: {
+                    let mut p = player.get_position().map(|i| i as f32);
+                    p[2] += 0.8;
+                    p
+                } }
+            ).unwrap();
+            let world_descriptor_set = {
+                let mut builder = desc_set_pool.next();
+                builder.add_buffer(ppd_buffer.clone()).unwrap();
+                builder.build().unwrap()
+            };
+            let ppd_buffer = CpuAccessibleBuffer::from_data(
+                device.clone(),
+                BufferUsage::uniform_buffer_transfer_destination(),
+                false,
+                pipeline::fs::ty::PlayerPositionData { pos: [0.0, 0.0, 0.8] }
+            ).unwrap();
+            let player_descriptor_set = {
+                let mut builder = desc_set_pool.next();
+                builder.add_buffer(ppd_buffer.clone()).unwrap();
+                builder.build().unwrap()
+            };
 
-            camera.update();
+            // Update game state
+            player.update();
+            let proj = player.camera.projection();
+            let view_projection = ViewProjectionData { vp: linalg::mul(proj, player.camera.view()) };
+            let player_view = {
+                let mut array = [0.0; 3];
+                let p = player.get_position();
+                let c = player.camera.get_position();
+                for i in 0..3 {
+                    array[i] = p[i] - c[i];
+                }
+                linalg::view(player.camera.get_rotation(), player.camera.get_scale(), array)
+            };
+            let view_projection_no_translation = ViewProjectionData { vp: linalg::mul(proj, player_view) };
 
-            if player_x >= world::WIDTH {
+            if player.complete {
                 // Destination reached
                 builder
                     .begin_render_pass(
@@ -355,9 +377,6 @@ fn main() {
                     ).unwrap()
                     .set_viewport(0, [viewport.clone()])
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
-                    // .bind_vertex_buffers(0, vertex_buffer.clone())
-                    // .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, player_camera.view())
-                    // .draw(vertex_buffer.len() as u32, 1, 0, 0).unwrap()
                     .end_render_pass().unwrap();
             } else {
                 builder
@@ -369,16 +388,22 @@ fn main() {
                     .set_viewport(0, [viewport.clone()])
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
                     .bind_vertex_buffers(0, vertex_buffer.clone())
-                    // .bind_descriptor_sets(
-                    //     PipelineBindPoint::Graphics,
-                    //     pipeline.graphics_pipeline.layout().clone(),
-                    //     0,
-                    //     descriptor_set
-                    // )
-                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, pipeline::vs::ty::ViewProjectionData { vp: camera::mul(camera.projection(), camera.view()) })
+                    .bind_descriptor_sets(
+                        PipelineBindPoint::Graphics,
+                        pipeline.graphics_pipeline.layout().clone(),
+                        0,
+                        world_descriptor_set
+                    )
+                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection)
                     .draw(vertex_buffer.len() as u32, 1, 0, 0).unwrap()
                     .bind_vertex_buffers(0, player_buffer.clone())
-                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, camera::mul(player_camera.projection(), player_camera.view()))
+                    .bind_descriptor_sets(
+                        PipelineBindPoint::Graphics,
+                        pipeline.graphics_pipeline.layout().clone(),
+                        0,
+                        player_descriptor_set
+                    )
+                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection_no_translation)
                     .draw(player_buffer.len() as u32, 1, 0, 0).unwrap()
                     .end_render_pass().unwrap();
             }
