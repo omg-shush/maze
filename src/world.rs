@@ -1,5 +1,10 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use std::collections::hash_map::HashMap;
+use std::collections::hash_set::HashSet;
+use std::collections::vec_deque::VecDeque;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use super::disjoint_set;
 use super::pipeline::cs::ty::{Rectangle, Vertex};
@@ -29,21 +34,23 @@ pub struct World {
     // Floors/Ceilings
     pub zwalls: [[[Wall; WIDTH]; HEIGHT]; DEPTH + 1],
 
-    pub start: [i32; 2],
-    pub finish: [i32; 2]
+    pub start: [i32; 3],
+    pub finish: [i32; 3],
+    pub solution: Vec<([i32; 3])>
 }
 
 impl World {
-    pub fn new() -> World {
+    pub fn new() -> Rc<RefCell<World>> {
         // Start by creating a 2D grid, with walls around each cell
-        World {
+        Rc::new(RefCell::new(World {
             cells: [[[Cell::Empty; WIDTH]; HEIGHT]; DEPTH],
             xwalls: [[[Wall::SolidWall; WIDTH + 1]; HEIGHT]; DEPTH],
             ywalls: [[[Wall::SolidWall; WIDTH]; HEIGHT + 1]; DEPTH],
             zwalls: [[[Wall::SolidWall; WIDTH]; HEIGHT]; DEPTH + 1],
-            start: [0, 0],
-            finish: [WIDTH as i32 - 1, HEIGHT as i32 - 1]
-        }
+            start: [0, 0, 0],
+            finish: [WIDTH as i32 - 1, HEIGHT as i32 - 1, DEPTH as i32 - 1],
+            solution: Vec::new()
+        }))
     }
 
     pub fn generate_maze(&mut self) {
@@ -87,6 +94,8 @@ impl World {
 
         // Take a random edge and check if the neighbor cells are connected
         // If not, remove the edge to merge them
+        // Also generate map from each cell to accessible neighbors
+        let mut neighbors: HashMap<(usize, usize, usize), Vec<(usize, usize, usize)>> = HashMap::new();
         for edge in edges.iter() {
             let (cell_a, cell_b) =
                 match edge {
@@ -103,7 +112,16 @@ impl World {
                     MazeEdge::YWall ([x, y, z]) => self.ywalls[*z][*y][*x] = Wall::NoWall,
                     MazeEdge::ZWall ([x, y, z]) => self.zwalls[*z][*y][*x] = Wall::NoWall
                 }
-                // ... and merge the sets they belong to
+                // Mark them as neighbors for BFS later
+                if !neighbors.contains_key(&cell_a) {
+                    neighbors.insert(cell_a, Vec::new());
+                }
+                if !neighbors.contains_key(&cell_b) {
+                    neighbors.insert(cell_b, Vec::new());
+                }
+                neighbors.get_mut(&cell_a).unwrap().push(cell_b);
+                neighbors.get_mut(&cell_b).unwrap().push(cell_a);
+                // And merge the sets they belong to
                 cells.union(&set_a, &set_b);
             }
         }
@@ -111,6 +129,37 @@ impl World {
 
         // Generate exit at bottom right corner of top layer
         self.xwalls[DEPTH - 1][HEIGHT - 1][WIDTH] = Wall::NoWall;
+
+        // Use breadth-first search to find solution
+        let mut queue: VecDeque<(usize, usize, usize)> = VecDeque::new();
+        queue.push_back((0, 0, 0));
+        let mut visited: HashSet<(usize, usize, usize)> = HashSet::new();
+        visited.insert((0, 0, 0));
+        let mut backtrack: HashMap<(usize, usize, usize), (usize, usize, usize)> = HashMap::new();
+        while !queue.is_empty() {
+            // Take next cell from queue
+            let cell = queue.pop_front().unwrap();
+
+            // Add unvisited neighbors to the queue
+            for n in neighbors.get(&cell).unwrap() {
+                if !visited.contains(n) {
+                    visited.insert(*n);
+                    queue.push_back(*n);
+                    backtrack.insert(*n, cell);
+                }
+            }
+        }
+        // Use backtracking information to recover path
+        let start = (self.start[0] as usize, self.start[1] as usize, self.start[2] as usize);
+        let finish = (self.finish[0] as usize, self.finish[1] as usize, self.finish[2] as usize);
+        let mut previous = finish;
+        self.solution.push(self.finish);
+        while previous != start {
+            previous = *backtrack.get(&previous).expect("Backtracking after BFS failed, impossible");
+            let (x, y, z) = previous;
+            self.solution.push([x, y, z].map(|i| i as i32));
+        }
+        self.solution.reverse(); // Get finish at the end of the vec
     }
 
     pub fn player_buffer(&self) -> Vec<Vertex> {

@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::vec;
 use std::sync::Arc;
+use std::time::Instant;
 
 use vulkano::descriptor_set::{SingleLayoutDescSetPool};
 use vulkano_win::VkSurfaceBuild;
@@ -117,9 +118,9 @@ fn main() {
     let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
 
     // Generate world data
-    let mut world = world::World::new();
-    world.generate_maze();
-    let world_data: Vec<Vec<Rectangle>> = (0..world::DEPTH).map(|level| world.vertex_buffer(level)).collect();
+    let world = world::World::new();
+    world.borrow_mut().generate_maze();
+    let world_data: Vec<Vec<Rectangle>> = (0..world::DEPTH).map(|level| world.borrow_mut().vertex_buffer(level)).collect();
     let world_buffer: Vec<Arc<CpuAccessibleBuffer<[Rectangle]>>> = world_data.into_iter().map(|level| {
         CpuAccessibleBuffer::from_iter(
             device.clone(),
@@ -132,7 +133,7 @@ fn main() {
         device.clone(),
         BufferUsage::vertex_buffer(),
         false,
-        world.player_buffer()
+        world.borrow_mut().player_buffer()
     ).expect("Failed to construct buffer");
 
     // Use compute shader to elaborate vertex data
@@ -215,7 +216,7 @@ fn main() {
         pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
     );
 
-    let mut player = Player::new();
+    let mut player = Player::new(world.clone());
 
     // Up, down, left, right, ascend, descend
     let mut keys = [ElementState::Released; 6];
@@ -239,9 +240,10 @@ fn main() {
                 }, ..
             }, ..
         } => {
-            if player.complete {
+            if player.complete || player.solve.is_some() {
                 return;
             }
+            let world = world.borrow_mut();
             match keycode {
                 VirtualKeyCode::W | VirtualKeyCode::Up => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
@@ -291,6 +293,11 @@ fn main() {
                     }
                     keys[5] = state
                 },
+                VirtualKeyCode::Return => {
+                    if state == ElementState::Pressed && player.solve.is_none() {
+                        player.solve = Some((0, Instant::now()));
+                    }
+                }
                 _ => {}
             }
         }

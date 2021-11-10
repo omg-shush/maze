@@ -1,5 +1,8 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::cell::RefCell;
 
+use super::world::World;
 use super::camera::Camera;
 use super::world;
 
@@ -8,18 +11,22 @@ pub struct Player {
     position: [f32; 3],
     dest_speed: f32,
     last_update: Instant,
+    world: Rc<RefCell<World>>,
     pub complete: bool,
+    pub solve: Option<(usize, Instant)>,
     pub camera: Camera
 }
 
 impl Player {
-    pub fn new() -> Player {
+    pub fn new(world: Rc<RefCell<World>>) -> Player {
         let mut p = Player {
             dest_position: [0, 0, 0],
             position: [0.0, 0.0, 0.0],
             dest_speed: 0.0,
             last_update: Instant::now(),
+            world: world,
             complete: false,
+            solve: None,
             camera: Camera::new()
         };
         p.camera.turn([15.0, 0.0, 0.0].map(|f: f32| f.to_radians()));
@@ -46,11 +53,32 @@ impl Player {
 
     pub fn update(&mut self) {
         let now = Instant::now();
+
+        // Interpolate position
         let delta: [f32; 3] = [0, 1, 2].map(|i| (self.dest_position[i] as f32 - self.position[i]) * self.dest_speed * (now - self.last_update).as_secs_f32());
         for i in 0..3 {
             self.position[i] += delta[i];
         }
+
+        // Auto-solve
+        if let Some((i, time)) = self.solve {
+            if now > time {
+                let n = self.world.borrow_mut().solution[i];
+                let p = self.cell();
+                self.move_position([n[0] - p[0], n[1] - p[1], n[2] - p[2]], 0.5);
+                if i + 1 < self.world.borrow_mut().solution.len() {
+                    let next_move = now + Duration::from_secs_f32(0.5);
+                    self.solve = Some((i + 1, next_move));
+                } else {
+                    self.solve = None;
+                }
+            }
+        }
+
+        // Tracking camera
         self.camera.adjust(delta);
+
+        // Check for victory
         if self.position[0].round() as usize >= world::WIDTH {
             self.complete = true;
         }
