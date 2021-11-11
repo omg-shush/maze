@@ -6,6 +6,8 @@ use super::world::World;
 use super::camera::Camera;
 use super::world;
 
+const CAMERA_OFFSET: [f32; 3] = [0.0, 0.4, 4.0];
+
 pub struct Player {
     dest_position: [i32; 3],
     position: [f32; 3],
@@ -30,7 +32,7 @@ impl Player {
             camera: Camera::new()
         };
         p.camera.turn([15.0, 0.0, 0.0].map(|f: f32| f.to_radians()));
-        p.camera.position([0.0, 0.4, 4.0]);
+        p.camera.position(CAMERA_OFFSET);
         p
     }
 
@@ -39,8 +41,12 @@ impl Player {
             self.dest_position[i] += delta[i];
         }
         self.last_update = Instant::now();
-        let dist = delta.map(|i| i * i).iter().fold(0.0, |acc, x| acc + *x as f32).sqrt();
-        self.dest_speed = dist / seconds;
+        if seconds <= 0.1 {
+            self.position = self.dest_position.map(|i| i as f32);
+        } else {
+            let dist = delta.map(|i| i * i).iter().fold(0.0, |acc, x| acc + *x as f32).sqrt();
+            self.dest_speed = dist / seconds;
+        }
     }
 
     pub fn get_position(&self) -> [f32; 3] {
@@ -56,18 +62,21 @@ impl Player {
 
         // Interpolate position
         let delta: [f32; 3] = [0, 1, 2].map(|i| (self.dest_position[i] as f32 - self.position[i]) * self.dest_speed * (now - self.last_update).as_secs_f32());
+        let mut camera_pos = [0.0; 3];
         for i in 0..3 {
             self.position[i] += delta[i];
+            camera_pos[i] = self.position[i] + CAMERA_OFFSET[i];
         }
+        self.camera.position(camera_pos);
 
         // Auto-solve
         if let Some((i, time)) = self.solve {
             if now > time {
                 let n = self.world.borrow_mut().solution[i];
                 let p = self.cell();
-                self.move_position([n[0] - p[0], n[1] - p[1], n[2] - p[2]], 0.5);
+                self.move_position([n[0] - p[0], n[1] - p[1], n[2] - p[2]], 0.2);
                 if i + 1 < self.world.borrow_mut().solution.len() {
-                    let next_move = now + Duration::from_secs_f32(0.5);
+                    let next_move = now + Duration::from_secs_f32(0.2);
                     self.solve = Some((i + 1, next_move));
                 } else {
                     self.solve = None;
@@ -77,6 +86,11 @@ impl Player {
 
         // Tracking camera
         self.camera.adjust(delta);
+        let mut pos = self.position.clone();
+        for i in 0..3 {
+            pos[i] += CAMERA_OFFSET[i];
+        }
+        self.camera.position(pos);
 
         // Check for victory
         if self.position[0].round() as usize >= world::WIDTH {

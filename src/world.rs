@@ -9,9 +9,9 @@ use std::cell::RefCell;
 use super::disjoint_set;
 use super::pipeline::cs::ty::{Rectangle, Vertex};
 
-pub const WIDTH: usize = 10;
-pub const HEIGHT: usize = 10;
-pub const DEPTH: usize = 10;
+pub const WIDTH: usize = 50;
+pub const HEIGHT: usize = 50;
+pub const DEPTH: usize = 50;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Cell {
@@ -26,13 +26,14 @@ pub enum Wall {
 
 #[derive(Debug, Clone)]
 pub struct World {
-    pub cells: [[[Cell; WIDTH]; HEIGHT]; DEPTH],
-    // Vertical walls
-    pub xwalls: [[[Wall; WIDTH + 1]; HEIGHT]; DEPTH],
-    // Horizontal walls
-    pub ywalls: [[[Wall; WIDTH]; HEIGHT + 1]; DEPTH],
-    // Floors/Ceilings
-    pub zwalls: [[[Wall; WIDTH]; HEIGHT]; DEPTH + 1],
+    // Dimensions: DEPTH x HEIGHT x WIDTH
+    pub cells: Box<[Box<[Box<[Cell]>]>]>,
+    // Vertical walls, DEPTH x HEIGHT x (WIDTH + 1)
+    pub xwalls: Box<[Box<[Box<[Wall]>]>]>,
+    // Horizontal walls, DEPTH x (HEIGHT + 1) x WIDTH
+    pub ywalls: Box<[Box<[Box<[Wall]>]>]>,
+    // Floors/Ceilings, (DEPTH + 1) x HEIGHT x WIDTH
+    pub zwalls: Box<[Box<[Box<[Wall]>]>]>,
 
     pub start: [i32; 3],
     pub finish: [i32; 3],
@@ -43,10 +44,10 @@ impl World {
     pub fn new() -> Rc<RefCell<World>> {
         // Start by creating a 2D grid, with walls around each cell
         Rc::new(RefCell::new(World {
-            cells: [[[Cell::Empty; WIDTH]; HEIGHT]; DEPTH],
-            xwalls: [[[Wall::SolidWall; WIDTH + 1]; HEIGHT]; DEPTH],
-            ywalls: [[[Wall::SolidWall; WIDTH]; HEIGHT + 1]; DEPTH],
-            zwalls: [[[Wall::SolidWall; WIDTH]; HEIGHT]; DEPTH + 1],
+            cells: vec![vec![vec![Cell::Empty; WIDTH].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH].into_boxed_slice(),
+            xwalls: vec![vec![vec![Wall::SolidWall; WIDTH + 1].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH].into_boxed_slice(),
+            ywalls: vec![vec![vec![Wall::SolidWall; WIDTH].into_boxed_slice(); HEIGHT + 1].into_boxed_slice(); DEPTH].into_boxed_slice(),
+            zwalls: vec![vec![vec![Wall::SolidWall; WIDTH].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH + 1].into_boxed_slice(),
             start: [0, 0, 0],
             finish: [WIDTH as i32 - 1, HEIGHT as i32 - 1, DEPTH as i32 - 1],
             solution: Vec::new()
@@ -178,9 +179,20 @@ impl World {
 
     pub fn vertex_buffer(&self, level: usize) -> Vec<Rectangle> {
         // Generate vertex data for maze
-        const FLOOR_COLOR: [f32; 3] = [ 0.9, 0.5, 0.5 ];
-        const WALL_COLOR: [f32; 3] = [ 0.0, 0.0, 0.8 ];
-        const ASCEND_COLOR: [f32; 3]= [ 0.4, 1.0, 0.0 ];
+        // const FLOOR_COLOR: [f32; 3] = [ 0.9, 0.5, 0.5 ];
+        const RAINBOW: [[f32; 3]; 7] = [
+            [ 0.8, 0.0, 0.0 ],
+            [ 0.8, 0.4, 0.0 ],
+            [ 0.4, 0.8, 0.0 ],
+            [ 0.0, 0.8, 0.0 ],
+            [ 0.0, 0.4, 0.8 ],
+            [ 0.0, 0.0, 0.8 ],
+            [ 0.4, 0.0, 0.8 ]
+        ];
+        // const ASCEND_COLOR: [f32; 3]= [ 0.4, 1.0, 0.0 ];
+        let wall_color = RAINBOW[level % RAINBOW.len()];
+        let floor_color = wall_color.map(|f| f * 0.2);
+        let ascend_color = wall_color.map(|f| (f * 1.2).clamp(0.0, 1.0));
         let mut data: Vec<Rectangle> = Vec::new();
 
         // Mark cells with open ceilings
@@ -191,10 +203,10 @@ impl World {
                     Wall::NoWall => {
                         let (x, y, z) = (x as f32, y as f32, level as f32 + 0.8);
                         [
-                            Rectangle { position: [x, y - 0.2, z], color: ASCEND_COLOR, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
-                            Rectangle { position: [x, y + 0.2, z], color: ASCEND_COLOR, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
-                            Rectangle { position: [x - 0.2, y, z], color: ASCEND_COLOR, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() },
-                            Rectangle { position: [x + 0.2, y, z], color: ASCEND_COLOR, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() }
+                            Rectangle { position: [x, y - 0.2, z], color: ascend_color, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
+                            Rectangle { position: [x, y + 0.2, z], color: ascend_color, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
+                            Rectangle { position: [x - 0.2, y, z], color: ascend_color, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() },
+                            Rectangle { position: [x + 0.2, y, z], color: ascend_color, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() }
                         ].to_vec()
                     }
                 }
@@ -210,7 +222,7 @@ impl World {
                 let (x, y, z) = (x as f32 - 0.5, y as f32, level as f32);
                 match wall {
                     Wall::SolidWall => Some (
-                            Rectangle { position: [x, y, z], color: WALL_COLOR, width: 0.2, height: 0.8, depth: 1.0, .. Default::default() }
+                            Rectangle { position: [x, y, z], color: wall_color, width: 0.2, height: 0.8, depth: 1.0, .. Default::default() }
                         ),
                     Wall::NoWall => None
                 }
@@ -227,7 +239,7 @@ impl World {
                 let (x, y, z) = (x as f32, y as f32 - 0.5, level as f32);
                 match wall {
                     Wall::SolidWall => Some (
-                            Rectangle { position: [x, y, z], color: WALL_COLOR, width: 0.8, height: 0.2, depth: 1.0, .. Default::default() }
+                            Rectangle { position: [x, y, z], color: wall_color, width: 0.8, height: 0.2, depth: 1.0, .. Default::default() }
                         ),
                     Wall::NoWall => None
                 }
@@ -243,7 +255,7 @@ impl World {
                 let (x, y, z) = (x as f32, y as f32, level as f32 - 0.05);
                 match wall {
                     Wall::SolidWall => Some (
-                            Rectangle { position: [x, y, z], color: FLOOR_COLOR, width: 1.0, height: 1.0, depth: 0.1, .. Default::default() }
+                            Rectangle { position: [x, y, z], color: floor_color, width: 1.0, height: 1.0, depth: 0.1, .. Default::default() }
                         ),
                     Wall::NoWall => None
                 }
@@ -257,7 +269,7 @@ impl World {
             for y in 0..HEIGHT + 1 {
                 // Draw a wall corner between cells ([)x - 1, y - 1, z) and (x, y, z)
                 let (x, y, z) = (x as f32 - 0.5, y as f32 - 0.5, level as f32);
-                data.push(Rectangle { position: [x, y, z], color: WALL_COLOR, width: 0.2, height: 0.2, depth: 1.0, .. Default::default() });
+                data.push(Rectangle { position: [x, y, z], color: wall_color, width: 0.2, height: 0.2, depth: 1.0, .. Default::default() });
             }
         }
 

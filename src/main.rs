@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::vec;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use vulkano::descriptor_set::{SingleLayoutDescSetPool};
 use vulkano_win::VkSurfaceBuild;
@@ -244,11 +244,12 @@ fn main() {
                 return;
             }
             let world = world.borrow_mut();
+            let seconds = 0.5;
             match keycode {
                 VirtualKeyCode::W | VirtualKeyCode::Up => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
                         if world.check_move(player.cell(), [0, -1, 0]) {
-                            player.move_position([0, -1, 0], 0.5);
+                            player.move_position([0, -1, 0], seconds);
                         }
                     }
                     keys[0] = state;
@@ -256,7 +257,7 @@ fn main() {
                 VirtualKeyCode::S | VirtualKeyCode::Down => {
                     if state == ElementState::Pressed && keys[1] == ElementState::Released {
                         if world.check_move(player.cell(), [0, 1, 0]) {
-                            player.move_position([0, 1, 0], 0.5);
+                            player.move_position([0, 1, 0], seconds);
                         }
                     }
                     keys[1] = state
@@ -264,7 +265,7 @@ fn main() {
                 VirtualKeyCode::A | VirtualKeyCode::Left => {
                     if state == ElementState::Pressed && keys[2] == ElementState::Released {
                         if world.check_move(player.cell(), [-1, 0, 0]) {
-                            player.move_position([-1, 0, 0], 0.5);
+                            player.move_position([-1, 0, 0], seconds);
                         }
                     }
                     keys[2] = state
@@ -272,7 +273,7 @@ fn main() {
                 VirtualKeyCode::D | VirtualKeyCode::Right => {
                     if state == ElementState::Pressed && keys[3] == ElementState::Released {
                         if world.check_move(player.cell(), [1, 0, 0]) {
-                            player.move_position([1, 0, 0], 0.5);
+                            player.move_position([1, 0, 0], seconds);
                         }
                     }
                     keys[3] = state
@@ -280,7 +281,7 @@ fn main() {
                 VirtualKeyCode::Space => {
                     if state == ElementState::Pressed && keys[4] == ElementState::Released {
                         if world.check_move(player.cell(), [0, 0, 1]) {
-                            player.move_position([0, 0, 1], 0.5);
+                            player.move_position([0, 0, 1], seconds);
                         }
                     }
                     keys[4] = state
@@ -288,14 +289,20 @@ fn main() {
                 VirtualKeyCode::LControl => {
                     if state == ElementState::Pressed && keys[5] == ElementState::Released {
                         if world.check_move(player.cell(), [0, 0, -1]) {
-                            player.move_position([0, 0, -1], 0.5);
+                            player.move_position([0, 0, -1], seconds);
                         }
                     }
                     keys[5] = state
                 },
                 VirtualKeyCode::Return => {
                     if state == ElementState::Pressed && player.solve.is_none() {
-                        player.solve = Some((0, Instant::now()));
+                        let mut delta = world.start;
+                        for i in 0..3 {
+                            delta[i] -= player.cell()[i];
+                        }
+                        player.move_position(delta, 0.0);
+                        player.solve = Some((0, Instant::now() + Duration::from_secs(2)));
+                        player.update();
                     }
                 }
                 _ => {}
