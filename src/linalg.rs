@@ -19,7 +19,7 @@ pub fn mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
     prod
 }
 
-pub fn view(rotation: [f32; 3], scale: [f32; 3], translation: [f32; 3]) -> [[f32; 4]; 4] {
+pub fn rotate(rotation: [f32; 3]) -> [[f32; 4]; 4] {
     let t = rotation[0];
     let rot_x = transpose([
         [1.0, 0.0, 0.0, 0.0],
@@ -41,13 +41,27 @@ pub fn view(rotation: [f32; 3], scale: [f32; 3], translation: [f32; 3]) -> [[f32
         [0.0, 0.0, 1.0, 0.0],
         [0.0, 0.0, 0.0, 1.0]
     ]);
+    mul(rot_z, mul(rot_y, rot_x))
+}
+
+pub fn model(rotation: [f32; 3], scale: [f32; 3], translation: [f32; 3]) -> [[f32; 4]; 4] {
     let trans_scale = transpose([
         [1.0, 0.0, 0.0, translation[0]].map(|x| x * scale[0]),
         [0.0, 1.0, 0.0, translation[1]].map(|x| x * scale[1]),
         [0.0, 0.0, 1.0, translation[2]].map(|x| x * scale[2]),
         [0.0, 0.0, 0.0, 1.0]
     ]);
-    mul(rot_z, mul(rot_y, mul(rot_x, trans_scale)))
+    mul(trans_scale, rotate(rotation))
+}
+
+pub fn view(rotation: [f32; 3], scale: [f32; 3], translation: [f32; 3]) -> [[f32; 4]; 4] {
+    let trans_scale = transpose([
+        [1.0, 0.0, 0.0, translation[0]].map(|x| x * scale[0]),
+        [0.0, 1.0, 0.0, translation[1]].map(|x| x * scale[1]),
+        [0.0, 0.0, 1.0, translation[2]].map(|x| x * scale[2]),
+        [0.0, 0.0, 0.0, 1.0]
+    ]);
+    mul(rotate(rotation), trans_scale)
 }
 
 pub fn projection(near: f32, far: f32, focal: f32, aspect: f32) -> [[f32; 4]; 4] {
@@ -57,4 +71,13 @@ pub fn projection(near: f32, far: f32, focal: f32, aspect: f32) -> [[f32; 4]; 4]
         [0.0,            0.0,   (near + far) / (near - far), (2.0 * near * far) / (near - far)],
         [0.0,            0.0,   -1.0,                        0.0]
     ])
+}
+
+pub fn identity() -> [[f32; 4]; 4] {
+    [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
+    ]
 }

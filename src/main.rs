@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::vec;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,7 +34,8 @@ use pipeline::cs::ty::Vertex;
 use parameters::Params;
 use player::Player;
 use pipeline::vs::ty::ViewProjectionData;
-use pipeline::cs::ty::Rectangle;
+use pipeline::InstanceModel;
+use model::Model;
 
 mod world;
 mod pipeline;
@@ -42,6 +44,7 @@ mod camera;
 mod parameters;
 mod player;
 mod linalg;
+mod model;
 
 fn main() {
     // Create vulkan instance
@@ -117,18 +120,45 @@ fn main() {
     // Compile shader pipeline
     let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
 
+    // Load models
+    let models: HashMap<String, Box<Model>> = [
+        Model::new(device.clone(), "wall.obj"),
+        Model::new(device.clone(), "floor.obj"),
+        Model::new(device.clone(), "corner.obj"),
+        Model::new(device.clone(), "ceiling.obj")
+    ].map(|m| (m.file.to_owned(), m)).into_iter().collect();
+
     // Generate world data
     let world = world::World::new();
     world.borrow_mut().generate_maze();
-    let world_data: Vec<Vec<Rectangle>> = (0..world::DEPTH).map(|level| world.borrow_mut().vertex_buffer(level)).collect();
-    let world_buffer: Vec<Arc<CpuAccessibleBuffer<[Rectangle]>>> = world_data.into_iter().map(|level| {
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::storage_buffer(),
-            false,
-            level
-        ).expect("Failed to construct buffer")
-    }).collect();
+    let world_data: Vec<(Vec<InstanceModel>, Vec<InstanceModel>, Vec<InstanceModel>, Vec<InstanceModel>)> = (0..world::DEPTH).map(|level| world.borrow_mut().vertex_buffer(level)).collect();
+    let world_buffer: Vec<[Arc<CpuAccessibleBuffer<[InstanceModel]>>; 4]> =
+        world_data.into_iter().map(|(walls, floors, corners, ceilings)| { [
+            CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::vertex_buffer(),
+                false,
+                walls
+            ).expect("Failed to construct buffer"),
+            CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::vertex_buffer(),
+                false,
+                floors
+            ).expect("Failed to construct buffer"),
+            CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::vertex_buffer(),
+                false,
+                corners
+            ).expect("Failed to construct buffer"),
+            CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::vertex_buffer(),
+                false,
+                ceilings
+            ).expect("Failed to construct buffer")
+        ] }).collect();
     let player_buffer = CpuAccessibleBuffer::from_iter(
         device.clone(),
         BufferUsage::vertex_buffer(),
@@ -137,56 +167,56 @@ fn main() {
     ).expect("Failed to construct buffer");
 
     // Use compute shader to elaborate vertex data
-    let vertex_buffer: Vec<Arc<DeviceLocalBuffer<[Vertex]>>> = world_buffer.iter().map(|level_buffer| {
-        DeviceLocalBuffer::array(
-            device.clone(),
-            36 * level_buffer.len() as u64, // 6 vertices per rectangle, 6 rectangles per box
-            BufferUsage {
-                storage_buffer: true,
-                vertex_buffer: true,
-                .. BufferUsage::none()
-            },
-            [draw_queue.family()]
-        ).unwrap()
-    }).collect();
+    // let vertex_buffer: Vec<Arc<DeviceLocalBuffer<[Vertex]>>> = world_buffer.iter().map(|level_buffer| {
+    //     DeviceLocalBuffer::array(
+    //         device.clone(),
+    //         36 * level_buffer.len() as u64, // 6 vertices per rectangle, 6 rectangles per box
+    //         BufferUsage {
+    //             storage_buffer: true,
+    //             vertex_buffer: true,
+    //             .. BufferUsage::none()
+    //         },
+    //         [draw_queue.family()]
+    //     ).unwrap()
+    // }).collect();
 
-    let mut builder = AutoCommandBufferBuilder::primary(
-        device.clone(),
-        draw_queue.family(),
-        CommandBufferUsage::OneTimeSubmit
-    ).unwrap();
-    builder.bind_pipeline_compute(pipeline.compute_pipeline.clone());
-    let mut compute_desc_set_pool = SingleLayoutDescSetPool::new(
-        pipeline.compute_pipeline.layout().descriptor_set_layouts()[0].clone()
-    );
-    for level in 0..world::DEPTH {
-        let input_len = world_buffer[level].len() as u32;
-        let compute_descriptor_set = {
-            let mut builder = compute_desc_set_pool.next();
-            builder.add_buffer(world_buffer[level].clone()).unwrap();
-            builder.add_buffer(vertex_buffer[level].clone()).unwrap();
-            builder.build().unwrap()
-        };
-        builder
-            .bind_descriptor_sets(
-                PipelineBindPoint::Compute,
-                pipeline.compute_pipeline.layout().clone(),
-                0,
-                compute_descriptor_set
-            )
-            .push_constants(
-                pipeline.compute_pipeline.layout().clone(),
-                0,
-                pipeline::cs::ty::SourceLength { len: input_len }
-            )
-            .dispatch([input_len / 256 + 1, 1, 1])
-            .unwrap();
-    }
-    let compute_command_buffer = builder.build().unwrap();
-    sync::now(device.clone())
-        .then_execute(draw_queue.clone(), compute_command_buffer).unwrap()
-        .then_signal_fence_and_flush().unwrap()
-        .wait(None).unwrap();
+    // let mut builder = AutoCommandBufferBuilder::primary(
+    //     device.clone(),
+    //     draw_queue.family(),
+    //     CommandBufferUsage::OneTimeSubmit
+    // ).unwrap();
+    // builder.bind_pipeline_compute(pipeline.compute_pipeline.clone());
+    // let mut compute_desc_set_pool = SingleLayoutDescSetPool::new(
+    //     pipeline.compute_pipeline.layout().descriptor_set_layouts()[0].clone()
+    // );
+    // for level in 0..world::DEPTH {
+    //     let input_len = world_buffer[level].len() as u32;
+    //     let compute_descriptor_set = {
+    //         let mut builder = compute_desc_set_pool.next();
+    //         builder.add_buffer(world_buffer[level].clone()).unwrap();
+    //         builder.add_buffer(vertex_buffer[level].clone()).unwrap();
+    //         builder.build().unwrap()
+    //     };
+    //     builder
+    //         .bind_descriptor_sets(
+    //             PipelineBindPoint::Compute,
+    //             pipeline.compute_pipeline.layout().clone(),
+    //             0,
+    //             compute_descriptor_set
+    //         )
+    //         .push_constants(
+    //             pipeline.compute_pipeline.layout().clone(),
+    //             0,
+    //             pipeline::cs::ty::SourceLength { len: input_len }
+    //         )
+    //         .dispatch([input_len / 256 + 1, 1, 1])
+    //         .unwrap();
+    // }
+    // let compute_command_buffer = builder.build().unwrap();
+    // sync::now(device.clone())
+    //     .then_execute(draw_queue.clone(), compute_command_buffer).unwrap()
+    //     .then_signal_fence_and_flush().unwrap()
+    //     .wait(None).unwrap();
 
     // Initialize framebuffers
     let dimensions = images[0].dimensions();
@@ -383,7 +413,11 @@ fn main() {
                 device.clone(),
                 BufferUsage::uniform_buffer_transfer_destination(),
                 false,
-                pipeline::fs::ty::PlayerPositionData { pos: [0.0, 0.0, 0.8] }
+                pipeline::fs::ty::PlayerPositionData { pos: {
+                    let mut pos = player.get_position();
+                    pos[2] += 0.8;
+                    pos
+                } }
             ).unwrap();
             let player_descriptor_set = {
                 let mut builder = desc_set_pool.next();
@@ -394,17 +428,7 @@ fn main() {
             // Update game state
             player.update();
             let proj = player.camera.projection();
-            let view_projection = ViewProjectionData { vp: linalg::mul(proj, player.camera.view()) };
-            let player_view = {
-                let mut array = [0.0; 3];
-                let p = player.get_position();
-                let c = player.camera.get_position();
-                for i in 0..3 {
-                    array[i] = p[i] - c[i];
-                }
-                linalg::view(player.camera.get_rotation(), player.camera.get_scale(), array)
-            };
-            let view_projection_no_translation = ViewProjectionData { vp: linalg::mul(proj, player_view) };
+            let view_projection = linalg::mul(proj, player.camera.view());
 
             if player.complete {
                 // Destination reached
@@ -431,25 +455,79 @@ fn main() {
                         pipeline.graphics_pipeline.layout().clone(),
                         0,
                         world_descriptor_set
-                    )
-                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection);
+                    );
 
                 for level in 0..(player.cell()[2] + 1) as usize {
+                    let [walls, floors, corners, ceilings] = &world_buffer[level];
                     builder
-                        .bind_vertex_buffers(0, vertex_buffer[level].clone())
-                        .draw(vertex_buffer[level].len() as u32, 1, 0, 0).unwrap();
+                        .push_constants(
+                            pipeline.graphics_pipeline.layout().clone(),
+                            0,
+                            ViewProjectionData { vp: view_projection, pushColor: [0.0, 0.4, 0.8] })
+                        .bind_vertex_buffers(0, (models["wall"].vertices.clone(), walls.clone()))
+                        .draw(
+                            models["wall"].vertices.len() as u32,
+                            walls.len() as u32,
+                            0,
+                            0)
+                        .unwrap()
+                        .push_constants(
+                            pipeline.graphics_pipeline.layout().clone(),
+                            0,
+                            ViewProjectionData { vp: view_projection, pushColor: [0.1, 0.6, 0.9] })
+                        .bind_vertex_buffers(0, (models["floor"].vertices.clone(), floors.clone()))
+                        .draw(
+                            models["floor"].vertices.len() as u32,
+                            floors.len() as u32,
+                            0,
+                            0)
+                        .unwrap()
+                        .push_constants(
+                            pipeline.graphics_pipeline.layout().clone(),
+                            0,
+                            ViewProjectionData { vp: view_projection, pushColor: [0.0, 0.1, 0.3] })
+                        .bind_vertex_buffers(0, (models["corner"].vertices.clone(), corners.clone()))
+                        .draw(
+                            models["corner"].vertices.len() as u32,
+                            corners.len() as u32,
+                            0,
+                            0)
+                        .unwrap()
+                        .push_constants(
+                            pipeline.graphics_pipeline.layout().clone(),
+                            0,
+                            ViewProjectionData { vp: view_projection, pushColor: [0.2, 0.8, 0.2] })
+                        .bind_vertex_buffers(0, (models["ceiling"].vertices.clone(), ceilings.clone()))
+                        .draw(
+                            models["ceiling"].vertices.len() as u32,
+                            ceilings.len() as u32,
+                            0,
+                            0)
+                        .unwrap();
                 }
                 
+                let player_instance = CpuAccessibleBuffer::from_iter(
+                    device.clone(),
+                    BufferUsage::vertex_buffer(),
+                    false,
+                    [InstanceModel {
+                        m: linalg::model([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], player.get_position())
+                    }].into_iter()
+                ).unwrap();
                 builder
-                    .bind_vertex_buffers(0, player_buffer.clone())
+                    .bind_vertex_buffers(0, (player_buffer.clone(), player_instance.clone()))
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         pipeline.graphics_pipeline.layout().clone(),
                         0,
                         player_descriptor_set
                     )
-                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection_no_translation)
-                    .draw(player_buffer.len() as u32, 1, 0, 0).unwrap()
+                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection)
+                    .draw(
+                        player_buffer.len() as u32,
+                        player_instance.len() as u32,
+                        0,
+                        0).unwrap()
                     .end_render_pass().unwrap();
             }
             let command_buffer = builder.build().unwrap();

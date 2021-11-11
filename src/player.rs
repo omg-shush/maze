@@ -31,7 +31,7 @@ impl Player {
             solve: None,
             camera: Camera::new()
         };
-        p.camera.turn([15.0, 0.0, 0.0].map(|f: f32| f.to_radians()));
+        p.camera.turn([30.0, 0.0, 0.0].map(|f: f32| f.to_radians()));
         p.camera.position(CAMERA_OFFSET);
         p
     }

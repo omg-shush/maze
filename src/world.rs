@@ -6,12 +6,15 @@ use std::collections::vec_deque::VecDeque;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use super::disjoint_set;
-use super::pipeline::cs::ty::{Rectangle, Vertex};
+use crate::linalg;
 
-pub const WIDTH: usize = 50;
-pub const HEIGHT: usize = 50;
-pub const DEPTH: usize = 50;
+use super::disjoint_set;
+use super::pipeline::InstanceModel;
+use super::pipeline::cs::ty::Vertex;
+
+pub const WIDTH: usize = 10;
+pub const HEIGHT: usize = 10;
+pub const DEPTH: usize = 10;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Cell {
@@ -177,7 +180,7 @@ impl World {
         ].to_vec()
     }
 
-    pub fn vertex_buffer(&self, level: usize) -> Vec<Rectangle> {
+    pub fn vertex_buffer(&self, level: usize) -> (Vec<InstanceModel>, Vec<InstanceModel>, Vec<InstanceModel>, Vec<InstanceModel>) {
         // Generate vertex data for maze
         // const FLOOR_COLOR: [f32; 3] = [ 0.9, 0.5, 0.5 ];
         const RAINBOW: [[f32; 3]; 7] = [
@@ -193,36 +196,41 @@ impl World {
         let wall_color = RAINBOW[level % RAINBOW.len()];
         let floor_color = wall_color.map(|f| f * 0.2);
         let ascend_color = wall_color.map(|f| (f * 1.2).clamp(0.0, 1.0));
-        let mut data: Vec<Rectangle> = Vec::new();
+        let mut walls: Vec<InstanceModel> = Vec::new();
+        let mut floors: Vec<InstanceModel> = Vec::new();
+        let mut corners: Vec<InstanceModel> = Vec::new();
+        let mut ceilings: Vec<InstanceModel> = Vec::new();
 
         // Mark cells with open ceilings
-        data.append(&mut self.cells[level].iter().enumerate().map(|(y, row)| {
-            row.iter().enumerate().map(move |(x, _cell)| {
+        ceilings.append(&mut self.cells[level].iter().enumerate().map(|(y, row)| {
+            row.iter().enumerate().filter_map(move |(x, _cell)| {
                 match self.zwalls[level + 1][y][x] {
-                    Wall::SolidWall => [].to_vec(),
+                    Wall::SolidWall => None,
                     Wall::NoWall => {
                         let (x, y, z) = (x as f32, y as f32, level as f32 + 0.8);
-                        [
-                            Rectangle { position: [x, y - 0.2, z], color: ascend_color, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
-                            Rectangle { position: [x, y + 0.2, z], color: ascend_color, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
-                            Rectangle { position: [x - 0.2, y, z], color: ascend_color, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() },
-                            Rectangle { position: [x + 0.2, y, z], color: ascend_color, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() }
-                        ].to_vec()
+                        // [
+                        //     Rectangle { position: [x, y - 0.2, z], color: ascend_color, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
+                        //     Rectangle { position: [x, y + 0.2, z], color: ascend_color, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
+                        //     Rectangle { position: [x - 0.2, y, z], color: ascend_color, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() },
+                        //     Rectangle { position: [x + 0.2, y, z], color: ascend_color, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() }
+                        // ].to_vec()
+                        Some (InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) })
                     }
                 }
-            }).flatten()
+            })
         })
         .flatten()
         .collect::<Vec<_>>());
 
         // Map xwalls to rectangles
-        data.append(&mut self.xwalls[level].iter().enumerate().map(|(y, row)| {
+        walls.append(&mut self.xwalls[level].iter().enumerate().map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, wall)| {
                 // Draw a wall between cells (x - 1, y, z) and (x, y, z)
                 let (x, y, z) = (x as f32 - 0.5, y as f32, level as f32);
                 match wall {
                     Wall::SolidWall => Some (
-                            Rectangle { position: [x, y, z], color: wall_color, width: 0.2, height: 0.8, depth: 1.0, .. Default::default() }
+                            // Rectangle { position: [x, y, z], color: wall_color, width: 0.2, height: 0.8, depth: 1.0, .. Default::default() }
+                            InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 90f32.to_radians()], [1.0, 1.0, 1.0], [x, y, z]) }
                         ),
                     Wall::NoWall => None
                 }
@@ -233,13 +241,14 @@ impl World {
         .collect::<Vec<_>>());
 
         // Map ywalls to rectangles
-        data.append(&mut self.ywalls[level].iter().enumerate().map(|(y, row)| {
+        walls.append(&mut self.ywalls[level].iter().enumerate().map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, wall)| {
                 // Draw a wall between cells (x, y - 1, z) and (x, y, z)
                 let (x, y, z) = (x as f32, y as f32 - 0.5, level as f32);
                 match wall {
                     Wall::SolidWall => Some (
-                            Rectangle { position: [x, y, z], color: wall_color, width: 0.8, height: 0.2, depth: 1.0, .. Default::default() }
+                            // Rectangle { position: [x, y, z], color: wall_color, width: 0.8, height: 0.2, depth: 1.0, .. Default::default() }
+                            InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) }
                         ),
                     Wall::NoWall => None
                 }
@@ -249,13 +258,14 @@ impl World {
         .collect::<Vec<_>>());
 
         // Map zwalls to rectangles
-        data.append(&mut self.zwalls[level].iter().enumerate().map(|(y, row)| {
+        floors.append(&mut self.zwalls[level].iter().enumerate().map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, wall)| {
-                // Draw a floor/ceiling between cells (x, y, z - 1) and (x, y, z)
+                // Draw a floor between cells (x, y, z - 1) and (x, y, z)
                 let (x, y, z) = (x as f32, y as f32, level as f32 - 0.05);
                 match wall {
                     Wall::SolidWall => Some (
-                            Rectangle { position: [x, y, z], color: floor_color, width: 1.0, height: 1.0, depth: 0.1, .. Default::default() }
+                            // Rectangle { position: [x, y, z], color: floor_color, width: 1.0, height: 1.0, depth: 0.1, .. Default::default() }
+                            InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) }
                         ),
                     Wall::NoWall => None
                 }
@@ -267,13 +277,14 @@ impl World {
         // Generate wall corners
         for x in 0..WIDTH + 1 {
             for y in 0..HEIGHT + 1 {
-                // Draw a wall corner between cells ([)x - 1, y - 1, z) and (x, y, z)
+                // Draw a wall corner between cells (x - 1, y - 1, z) and (x, y, z)
                 let (x, y, z) = (x as f32 - 0.5, y as f32 - 0.5, level as f32);
-                data.push(Rectangle { position: [x, y, z], color: wall_color, width: 0.2, height: 0.2, depth: 1.0, .. Default::default() });
+                // data.push(Rectangle { position: [x, y, z], color: wall_color, width: 0.2, height: 0.2, depth: 1.0, .. Default::default() });
+                corners.push(InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) });
             }
         }
 
-        data
+        (walls, floors, corners, ceilings)
     }
 
     pub fn check_move(&self, current: [i32; 3], delta: [i32; 3]) -> bool {

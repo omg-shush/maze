@@ -6,7 +6,7 @@ use vulkano::device::Device;
 use vulkano::swapchain::Swapchain;
 use vulkano::pipeline::{ComputePipeline, GraphicsPipeline};
 use vulkano::render_pass::Subpass;
-use vulkano::pipeline::vertex::Vertex;
+use vulkano::pipeline::vertex::{BuffersDefinition, Vertex};
 use vulkano::render_pass::RenderPass;
 use vulkano::impl_vertex;
 use vulkano::format::Format;
@@ -21,19 +21,25 @@ pub mod vs {
         layout(location = 0) in vec3 position;
         layout(location = 1) in vec3 color;
         layout(location = 2) in vec3 normal;
+        layout(location = 3) in mat4 m;
         layout(push_constant) uniform ViewProjectionData {
             mat4 vp;
+            vec3 pushColor;
         } vpd;
         layout(location = 0) out vec3 passPosition;
         layout(location = 1) out vec3 passColor;
         layout(location = 2) out vec3 passNormal;
         void main() {
-            gl_Position = vpd.vp * vec4(position, 1.0);
-            passPosition = position;
-            passColor = color;
-            passNormal = normal;
+            vec4 worldPosition = m * vec4(position, 1.0);
+            gl_Position = vpd.vp * worldPosition;
+            passPosition = worldPosition.xyz;
+            passColor = vpd.pushColor;
+            passNormal = normalize((m * vec4(normal, 0.0)).xyz);
         }
-        "
+        ",
+        types_meta: {
+            #[derive(Clone, Copy, PartialEq, Debug, Default)]
+        }
     }
 }
 
@@ -175,6 +181,11 @@ pub mod cs {
 
 impl_vertex!(cs::ty::Rectangle, position, color, width, height);
 impl_vertex!(cs::ty::Vertex, position, color, normal);
+#[derive(Default, Clone, Copy)]
+pub struct InstanceModel {
+    pub m: [[f32; 4]; 4]
+}
+impl_vertex!(InstanceModel, m);
 
 pub struct Pipeline {
     pub render_pass: Arc<RenderPass>,
@@ -223,7 +234,10 @@ pub fn compile_shaders<T: Vertex>(
 
     let graphics_pipeline = Arc::new(
         GraphicsPipeline::start()
-            .vertex_input_single_buffer::<T>()
+            .vertex_input(
+                BuffersDefinition::new()
+                .vertex::<cs::ty::Vertex>()
+                .instance::<InstanceModel>())
             .vertex_shader(vertex_shader.main_entry_point(), ())
             .fragment_shader(fragment_shader.main_entry_point(), ())
             .depth_stencil_simple_depth()
