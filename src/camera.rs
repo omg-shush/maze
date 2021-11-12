@@ -1,4 +1,4 @@
-use super::linalg;
+use crate::linalg;
 
 pub struct Camera {
     position: [f32; 3],
@@ -19,10 +19,6 @@ impl Camera {
         self.position = position;
     }
 
-    pub fn get_position(&self) -> [f32; 3] {
-        self.position
-    }
-
     pub fn adjust(&mut self, delta: [f32; 3]) {
         for i in 0..3 {
             self.position[i] += delta[i];
@@ -33,14 +29,6 @@ impl Camera {
         for i in 0..3 {
             self.rotation[i] += delta[i];
         }
-    }
-
-    pub fn get_rotation(&self) -> [f32; 3] {
-        self.rotation
-    }
-
-    pub fn get_scale(&self) -> [f32; 3] {
-        self.scale
     }
 
     pub fn view(&self) -> [[f32; 4]; 4] {

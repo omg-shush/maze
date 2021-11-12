@@ -2,18 +2,19 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use vulkano::device::Device;
+use vulkano::buffer::{BufferUsage, ImmutableBuffer};
+use vulkano::device::Queue;
+use vulkano::sync::GpuFuture;
 
-use super::pipeline::cs::ty::Vertex;
+use crate::pipeline::cs::ty::Vertex;
 
 pub struct Model {
     pub file: String,
-    pub vertices: Arc<CpuAccessibleBuffer<[Vertex]>>
+    pub vertices: Arc<ImmutableBuffer<[Vertex]>>
 }
 
 impl Model {
-    pub fn new(device: Arc<Device>, filename: &str) -> Box<Model> {
+    pub fn new(queue: Arc<Queue>, filename: &str) -> (Box<Model>, Box<dyn GpuFuture>) {
         let mut vertices = Vec::new();
         let file = fs::File::open(filename).expect(&format!("Failed to load model `{}'", filename));
         let reader = BufReader::new(file);
@@ -56,14 +57,14 @@ impl Model {
             }
         }
         println!("Loaded model {}", filename);
-        Box::new(Model {
+        let (vertices, future) = ImmutableBuffer::from_iter(
+            vertices,
+            BufferUsage::vertex_buffer(),
+            queue
+        ).unwrap();
+        (Box::new(Model {
             file: filename.split('.').next().unwrap().to_owned(),
-            vertices: CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::vertex_buffer(),
-                false,
-                vertices
-            ).unwrap()
-        })
+            vertices
+        }), future.boxed())
     }
 }

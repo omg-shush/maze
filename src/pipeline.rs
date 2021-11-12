@@ -11,7 +11,7 @@ use vulkano::render_pass::RenderPass;
 use vulkano::impl_vertex;
 use vulkano::format::Format;
 
-use super::parameters::Params;
+use crate::parameters::Params;
 
 pub mod vs {
     vulkano_shaders::shader! {

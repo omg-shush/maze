@@ -1,16 +1,27 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use vulkano::pipeline::PipelineBindPoint;
 use std::collections::hash_map::HashMap;
 use std::collections::hash_set::HashSet;
 use std::collections::vec_deque::VecDeque;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::sync::Arc;
+
+use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+use vulkano::descriptor_set::SingleLayoutDescSetPool;
+use vulkano::device::Queue;
+use vulkano::sync::{now, GpuFuture};
 
 use crate::linalg;
-
-use super::disjoint_set;
-use super::pipeline::InstanceModel;
-use super::pipeline::cs::ty::Vertex;
+use crate::pipeline::Pipeline;
+use crate::disjoint_set;
+use crate::pipeline::InstanceModel;
+use crate::pipeline::fs::ty::PlayerPositionData;
+use crate::player::Player;
+use crate::model::Model;
+use crate::pipeline::vs::ty::ViewProjectionData;
 
 pub const WIDTH: usize = 10;
 pub const HEIGHT: usize = 10;
@@ -27,7 +38,6 @@ pub enum Wall {
     SolidWall
 }
 
-#[derive(Debug, Clone)]
 pub struct World {
     // Dimensions: DEPTH x HEIGHT x WIDTH
     pub cells: Box<[Box<[Box<[Cell]>]>]>,
@@ -40,21 +50,120 @@ pub struct World {
 
     pub start: [i32; 3],
     pub finish: [i32; 3],
-    pub solution: Vec<([i32; 3])>
+    pub solution: Vec<([i32; 3])>,
+
+    player_position_buffer_pool: CpuBufferPool<[PlayerPositionData; 1]>,
+    vertex_buffers: Vec<Vec<Arc<ImmutableBuffer<[InstanceModel]>>>>
 }
 
 impl World {
-    pub fn new() -> Rc<RefCell<World>> {
+    pub fn new(queue: Arc<Queue>) -> (Rc<RefCell<World>>, Box<dyn GpuFuture>) {
         // Start by creating a 2D grid, with walls around each cell
-        Rc::new(RefCell::new(World {
+        let mut world = World {
             cells: vec![vec![vec![Cell::Empty; WIDTH].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH].into_boxed_slice(),
             xwalls: vec![vec![vec![Wall::SolidWall; WIDTH + 1].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH].into_boxed_slice(),
             ywalls: vec![vec![vec![Wall::SolidWall; WIDTH].into_boxed_slice(); HEIGHT + 1].into_boxed_slice(); DEPTH].into_boxed_slice(),
             zwalls: vec![vec![vec![Wall::SolidWall; WIDTH].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH + 1].into_boxed_slice(),
             start: [0, 0, 0],
             finish: [WIDTH as i32 - 1, HEIGHT as i32 - 1, DEPTH as i32 - 1],
-            solution: Vec::new()
-        }))
+            solution: Vec::new(),
+            player_position_buffer_pool: CpuBufferPool::new(queue.device().clone(), BufferUsage::uniform_buffer()),
+            vertex_buffers: Vec::new()
+        };
+        world.generate_maze();
+        
+        let world_data: Vec<_> = (0..DEPTH).map(|level| world.vertex_buffer(level)).collect();
+        let world_buffer: Vec<_> =
+            world_data.into_iter().map(|instance_buffers| {
+                instance_buffers.map(|ibuf| {
+                    ImmutableBuffer::from_iter(
+                        ibuf,
+                        BufferUsage::vertex_buffer(),
+                        queue.clone()
+                    ).expect("Failed to construct buffer")
+                })
+            }).collect();
+        let future = now(queue.device().clone()).boxed();
+        let future = world_buffer.into_iter().fold(future, |future, level| {
+            let mut level_buffers = Vec::new();
+            let future = level.into_iter().fold(future, |future, (buf, upload)| {
+                level_buffers.push(buf);
+                future.join(upload).boxed()
+            });
+            world.vertex_buffers.push(level_buffers);
+            future.then_signal_fence_and_flush().unwrap().boxed()
+        });
+        println!("Initialized world");
+        (Rc::new(RefCell::new(world)), future)
+    }
+
+    pub fn render(&self, models: &HashMap<String, Box<Model>>, player: &Box<Player>, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
+        let player_position_buffer = self.player_position_buffer_pool.next([
+            PlayerPositionData { pos: linalg::add(player.get_position(), [0.0, 0.0, 0.4]) }
+        ]).unwrap();
+        let descriptor_set = {
+            let mut builder = desc_set_pool.next();
+            builder.add_buffer(Arc::new(player_position_buffer)).unwrap();
+            builder.build().unwrap()
+        };
+        builder
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                pipeline.graphics_pipeline.layout().clone(),
+                0,
+                descriptor_set
+            );
+        let view_projection = linalg::mul(player.camera.projection(), player.camera.view());
+        let (min_level, max_level) = ((player.cell()[2] - 6).clamp(0, DEPTH as i32) as usize, player.cell()[2] as usize);
+        for level in min_level..max_level + 1 {
+            let bufs: Vec<_> = self.vertex_buffers[level].iter().map(|arc| arc.clone()).collect();
+            let (walls, floors, corners, ceilings) = (bufs[0].clone(), bufs[1].clone(), bufs[2].clone(), bufs[3].clone());
+            builder
+                .push_constants(
+                    pipeline.graphics_pipeline.layout().clone(),
+                    0,
+                    ViewProjectionData { vp: view_projection, pushColor: [0.0, 0.4, 0.8] })
+                .bind_vertex_buffers(0, (models["wall"].vertices.clone(), walls.clone()))
+                .draw(
+                    models["wall"].vertices.len() as u32,
+                    walls.len() as u32,
+                    0,
+                    0)
+                .unwrap()
+                .push_constants(
+                    pipeline.graphics_pipeline.layout().clone(),
+                    0,
+                    ViewProjectionData { vp: view_projection, pushColor: [0.1, 0.6, 0.9] })
+                .bind_vertex_buffers(0, (models["floor"].vertices.clone(), floors.clone()))
+                .draw(
+                    models["floor"].vertices.len() as u32,
+                    floors.len() as u32,
+                    0,
+                    0)
+                .unwrap()
+                .push_constants(
+                    pipeline.graphics_pipeline.layout().clone(),
+                    0,
+                    ViewProjectionData { vp: view_projection, pushColor: [0.0, 0.1, 0.3] })
+                .bind_vertex_buffers(0, (models["corner"].vertices.clone(), corners.clone()))
+                .draw(
+                    models["corner"].vertices.len() as u32,
+                    corners.len() as u32,
+                    0,
+                    0)
+                .unwrap()
+                .push_constants(
+                    pipeline.graphics_pipeline.layout().clone(),
+                    0,
+                    ViewProjectionData { vp: view_projection, pushColor: [0.2, 0.8, 0.2] })
+                .bind_vertex_buffers(0, (models["ceiling"].vertices.clone(), ceilings.clone()))
+                .draw(
+                    models["ceiling"].vertices.len() as u32,
+                    ceilings.len() as u32,
+                    0,
+                    0)
+                .unwrap();
+        }
     }
 
     pub fn generate_maze(&mut self) {
@@ -166,36 +275,22 @@ impl World {
         self.solution.reverse(); // Get finish at the end of the vec
     }
 
-    pub fn player_buffer(&self) -> Vec<Vertex> {
-        const PLAYER_COLOR: [f32; 3] = [ 0.2, 0.2, 0.8 ];
-        const HALF_SIZE: f32 = 0.2;
-        let (x, y) = (0.0, 0.0);
-        [
-            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
-            Vertex { position: [ x + HALF_SIZE, y - HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
-            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
-            Vertex { position: [ x - HALF_SIZE, y - HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
-            Vertex { position: [ x - HALF_SIZE, y + HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() },
-            Vertex { position: [ x + HALF_SIZE, y + HALF_SIZE, 0.5 ], color: PLAYER_COLOR, normal: [0.0, 0.0, 1.0], .. Default::default() }
-        ].to_vec()
-    }
-
-    pub fn vertex_buffer(&self, level: usize) -> (Vec<InstanceModel>, Vec<InstanceModel>, Vec<InstanceModel>, Vec<InstanceModel>) {
+    pub fn vertex_buffer(&self, level: usize) -> [Vec<InstanceModel>; 4] {
         // Generate vertex data for maze
         // const FLOOR_COLOR: [f32; 3] = [ 0.9, 0.5, 0.5 ];
-        const RAINBOW: [[f32; 3]; 7] = [
-            [ 0.8, 0.0, 0.0 ],
-            [ 0.8, 0.4, 0.0 ],
-            [ 0.4, 0.8, 0.0 ],
-            [ 0.0, 0.8, 0.0 ],
-            [ 0.0, 0.4, 0.8 ],
-            [ 0.0, 0.0, 0.8 ],
-            [ 0.4, 0.0, 0.8 ]
-        ];
+        // const RAINBOW: [[f32; 3]; 7] = [
+        //     [ 0.8, 0.0, 0.0 ],
+        //     [ 0.8, 0.4, 0.0 ],
+        //     [ 0.4, 0.8, 0.0 ],
+        //     [ 0.0, 0.8, 0.0 ],
+        //     [ 0.0, 0.4, 0.8 ],
+        //     [ 0.0, 0.0, 0.8 ],
+        //     [ 0.4, 0.0, 0.8 ]
+        // ];
         // const ASCEND_COLOR: [f32; 3]= [ 0.4, 1.0, 0.0 ];
-        let wall_color = RAINBOW[level % RAINBOW.len()];
-        let floor_color = wall_color.map(|f| f * 0.2);
-        let ascend_color = wall_color.map(|f| (f * 1.2).clamp(0.0, 1.0));
+        // let wall_color = RAINBOW[level % RAINBOW.len()];
+        // let floor_color = wall_color.map(|f| f * 0.2);
+        // let ascend_color = wall_color.map(|f| (f * 1.2).clamp(0.0, 1.0));
         let mut walls: Vec<InstanceModel> = Vec::new();
         let mut floors: Vec<InstanceModel> = Vec::new();
         let mut corners: Vec<InstanceModel> = Vec::new();
@@ -208,12 +303,6 @@ impl World {
                     Wall::SolidWall => None,
                     Wall::NoWall => {
                         let (x, y, z) = (x as f32, y as f32, level as f32 + 0.8);
-                        // [
-                        //     Rectangle { position: [x, y - 0.2, z], color: ascend_color, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
-                        //     Rectangle { position: [x, y + 0.2, z], color: ascend_color, width: 0.4, height: 0.05, depth: 0.05, .. Default::default() },
-                        //     Rectangle { position: [x - 0.2, y, z], color: ascend_color, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() },
-                        //     Rectangle { position: [x + 0.2, y, z], color: ascend_color, width: 0.05, height: 0.4, depth: 0.05, .. Default::default() }
-                        // ].to_vec()
                         Some (InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) })
                     }
                 }
@@ -229,7 +318,6 @@ impl World {
                 let (x, y, z) = (x as f32 - 0.5, y as f32, level as f32);
                 match wall {
                     Wall::SolidWall => Some (
-                            // Rectangle { position: [x, y, z], color: wall_color, width: 0.2, height: 0.8, depth: 1.0, .. Default::default() }
                             InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 90f32.to_radians()], [1.0, 1.0, 1.0], [x, y, z]) }
                         ),
                     Wall::NoWall => None
@@ -247,7 +335,6 @@ impl World {
                 let (x, y, z) = (x as f32, y as f32 - 0.5, level as f32);
                 match wall {
                     Wall::SolidWall => Some (
-                            // Rectangle { position: [x, y, z], color: wall_color, width: 0.8, height: 0.2, depth: 1.0, .. Default::default() }
                             InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) }
                         ),
                     Wall::NoWall => None
@@ -264,7 +351,6 @@ impl World {
                 let (x, y, z) = (x as f32, y as f32, level as f32 - 0.05);
                 match wall {
                     Wall::SolidWall => Some (
-                            // Rectangle { position: [x, y, z], color: floor_color, width: 1.0, height: 1.0, depth: 0.1, .. Default::default() }
                             InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) }
                         ),
                     Wall::NoWall => None
@@ -279,24 +365,14 @@ impl World {
             for y in 0..HEIGHT + 1 {
                 // Draw a wall corner between cells (x - 1, y - 1, z) and (x, y, z)
                 let (x, y, z) = (x as f32 - 0.5, y as f32 - 0.5, level as f32);
-                // data.push(Rectangle { position: [x, y, z], color: wall_color, width: 0.2, height: 0.2, depth: 1.0, .. Default::default() });
                 corners.push(InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) });
             }
         }
 
-        (walls, floors, corners, ceilings)
+        [walls, floors, corners, ceilings]
     }
 
     pub fn check_move(&self, current: [i32; 3], delta: [i32; 3]) -> bool {
-        // if current[0] != proposed[0] && current[1] == proposed[1] {
-        //     return false
-        // }
-        // if (current[0] - proposed[0]).abs() > 1 || (current[1] - proposed[1]).abs() > 1 {
-        //     return false
-        // }
-        // if proposed[0] < 0 || proposed[0] >= WIDTH || proposed[1] < 0 || proposed[1] >= HEIGHT {
-        //     return false
-        // }
         let (x, y, z) = (current[0] as usize, current[1] as usize, current[2] as usize);
         match delta {
             // Move up

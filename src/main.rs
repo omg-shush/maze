@@ -21,20 +21,15 @@ use vulkano::image::attachment::AttachmentImage;
 use vulkano::swapchain;
 use vulkano::swapchain::{Swapchain, AcquireError, SwapchainCreationError};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
-use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::{BufferUsage, DeviceLocalBuffer, TypedBufferAccess};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract};
 use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
-use vulkano::pipeline::PipelineBindPoint;
 use vulkano::format::{ClearValue, Format};
 
 use pipeline::cs::ty::Vertex;
 use parameters::Params;
 use player::Player;
-use pipeline::vs::ty::ViewProjectionData;
-use pipeline::InstanceModel;
 use model::Model;
 
 mod world;
@@ -121,50 +116,26 @@ fn main() {
     let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
 
     // Load models
+    let mut init_futures = Vec::new();
     let models: HashMap<String, Box<Model>> = [
-        Model::new(device.clone(), "wall.obj"),
-        Model::new(device.clone(), "floor.obj"),
-        Model::new(device.clone(), "corner.obj"),
-        Model::new(device.clone(), "ceiling.obj")
-    ].map(|m| (m.file.to_owned(), m)).into_iter().collect();
+        Model::new(draw_queue.clone(), "wall.obj"),
+        Model::new(draw_queue.clone(), "floor.obj"),
+        Model::new(draw_queue.clone(), "corner.obj"),
+        Model::new(draw_queue.clone(), "ceiling.obj")
+    ].map(|(model, future)| {
+        init_futures.push(future);
+        (model.file.to_owned(), model)
+    }).into_iter().collect();
 
     // Generate world data
-    let world = world::World::new();
-    world.borrow_mut().generate_maze();
-    let world_data: Vec<(Vec<InstanceModel>, Vec<InstanceModel>, Vec<InstanceModel>, Vec<InstanceModel>)> = (0..world::DEPTH).map(|level| world.borrow_mut().vertex_buffer(level)).collect();
-    let world_buffer: Vec<[Arc<CpuAccessibleBuffer<[InstanceModel]>>; 4]> =
-        world_data.into_iter().map(|(walls, floors, corners, ceilings)| { [
-            CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::vertex_buffer(),
-                false,
-                walls
-            ).expect("Failed to construct buffer"),
-            CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::vertex_buffer(),
-                false,
-                floors
-            ).expect("Failed to construct buffer"),
-            CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::vertex_buffer(),
-                false,
-                corners
-            ).expect("Failed to construct buffer"),
-            CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::vertex_buffer(),
-                false,
-                ceilings
-            ).expect("Failed to construct buffer")
-        ] }).collect();
-    let player_buffer = CpuAccessibleBuffer::from_iter(
-        device.clone(),
-        BufferUsage::vertex_buffer(),
-        false,
-        world.borrow_mut().player_buffer()
-    ).expect("Failed to construct buffer");
+    let (world, world_init_future) = world::World::new(draw_queue.clone());
+    let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone(), world.clone());
+    init_futures.push(world_init_future);
+    init_futures.push(player_init_future);
+
+    let init_future = init_futures.into_iter().fold(sync::now(device.clone()).boxed(), |acc, future| {
+        acc.join(future).boxed()
+    }).then_signal_fence_and_flush().expect("Flushing init commands failed");
 
     // Use compute shader to elaborate vertex data
     // let vertex_buffer: Vec<Arc<DeviceLocalBuffer<[Vertex]>>> = world_buffer.iter().map(|level_buffer| {
@@ -235,18 +206,16 @@ fn main() {
                 Framebuffer::start(pipeline.render_pass.clone())
                     .add(mview).unwrap()
                     .add(view).unwrap()
-                    .add(dview.clone()).unwrap()
-                    .build().unwrap()
+                    .add(dview.clone()
+                ).unwrap().build().unwrap()
             ) as Arc<dyn FramebufferAbstract + Send + Sync>
         }).collect::<Vec<_>>();
 
-    let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
+    let mut previous_frame_end = Some (init_future.boxed());
     let mut recreate_swapchain = false;
     let mut desc_set_pool = SingleLayoutDescSetPool::new(
         pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
     );
-
-    let mut player = Player::new(world.clone());
 
     // Up, down, left, right, ascend, descend
     let mut keys = [ElementState::Released; 6];
@@ -393,42 +362,8 @@ fn main() {
                 CommandBufferUsage::OneTimeSubmit
             ).unwrap();
 
-            // Update uniforms
-            let ppd_buffer = CpuAccessibleBuffer::from_data(
-                device.clone(),
-                BufferUsage::uniform_buffer_transfer_destination(),
-                false,
-                pipeline::fs::ty::PlayerPositionData { pos: {
-                    let mut p = player.get_position();
-                    p[2] += 0.8;
-                    p
-                } }
-            ).unwrap();
-            let world_descriptor_set = {
-                let mut builder = desc_set_pool.next();
-                builder.add_buffer(ppd_buffer.clone()).unwrap();
-                builder.build().unwrap()
-            };
-            let ppd_buffer = CpuAccessibleBuffer::from_data(
-                device.clone(),
-                BufferUsage::uniform_buffer_transfer_destination(),
-                false,
-                pipeline::fs::ty::PlayerPositionData { pos: {
-                    let mut pos = player.get_position();
-                    pos[2] += 0.8;
-                    pos
-                } }
-            ).unwrap();
-            let player_descriptor_set = {
-                let mut builder = desc_set_pool.next();
-                builder.add_buffer(ppd_buffer.clone()).unwrap();
-                builder.build().unwrap()
-            };
-
             // Update game state
             player.update();
-            let proj = player.camera.projection();
-            let view_projection = linalg::mul(proj, player.camera.view());
 
             if player.complete {
                 // Destination reached
@@ -449,86 +384,12 @@ fn main() {
                         clear_values
                     ).unwrap()
                     .set_viewport(0, [viewport.clone()])
-                    .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
-                    .bind_descriptor_sets(
-                        PipelineBindPoint::Graphics,
-                        pipeline.graphics_pipeline.layout().clone(),
-                        0,
-                        world_descriptor_set
-                    );
+                    .bind_pipeline_graphics(pipeline.graphics_pipeline.clone());
 
-                for level in 0..(player.cell()[2] + 1) as usize {
-                    let [walls, floors, corners, ceilings] = &world_buffer[level];
-                    builder
-                        .push_constants(
-                            pipeline.graphics_pipeline.layout().clone(),
-                            0,
-                            ViewProjectionData { vp: view_projection, pushColor: [0.0, 0.4, 0.8] })
-                        .bind_vertex_buffers(0, (models["wall"].vertices.clone(), walls.clone()))
-                        .draw(
-                            models["wall"].vertices.len() as u32,
-                            walls.len() as u32,
-                            0,
-                            0)
-                        .unwrap()
-                        .push_constants(
-                            pipeline.graphics_pipeline.layout().clone(),
-                            0,
-                            ViewProjectionData { vp: view_projection, pushColor: [0.1, 0.6, 0.9] })
-                        .bind_vertex_buffers(0, (models["floor"].vertices.clone(), floors.clone()))
-                        .draw(
-                            models["floor"].vertices.len() as u32,
-                            floors.len() as u32,
-                            0,
-                            0)
-                        .unwrap()
-                        .push_constants(
-                            pipeline.graphics_pipeline.layout().clone(),
-                            0,
-                            ViewProjectionData { vp: view_projection, pushColor: [0.0, 0.1, 0.3] })
-                        .bind_vertex_buffers(0, (models["corner"].vertices.clone(), corners.clone()))
-                        .draw(
-                            models["corner"].vertices.len() as u32,
-                            corners.len() as u32,
-                            0,
-                            0)
-                        .unwrap()
-                        .push_constants(
-                            pipeline.graphics_pipeline.layout().clone(),
-                            0,
-                            ViewProjectionData { vp: view_projection, pushColor: [0.2, 0.8, 0.2] })
-                        .bind_vertex_buffers(0, (models["ceiling"].vertices.clone(), ceilings.clone()))
-                        .draw(
-                            models["ceiling"].vertices.len() as u32,
-                            ceilings.len() as u32,
-                            0,
-                            0)
-                        .unwrap();
-                }
+                world.borrow().render(&models, &player, &mut desc_set_pool, &mut builder, &pipeline);
+                player.render(&mut desc_set_pool, &mut builder, &pipeline);
                 
-                let player_instance = CpuAccessibleBuffer::from_iter(
-                    device.clone(),
-                    BufferUsage::vertex_buffer(),
-                    false,
-                    [InstanceModel {
-                        m: linalg::model([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], player.get_position())
-                    }].into_iter()
-                ).unwrap();
-                builder
-                    .bind_vertex_buffers(0, (player_buffer.clone(), player_instance.clone()))
-                    .bind_descriptor_sets(
-                        PipelineBindPoint::Graphics,
-                        pipeline.graphics_pipeline.layout().clone(),
-                        0,
-                        player_descriptor_set
-                    )
-                    .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection)
-                    .draw(
-                        player_buffer.len() as u32,
-                        player_instance.len() as u32,
-                        0,
-                        0).unwrap()
-                    .end_render_pass().unwrap();
+                builder.end_render_pass().unwrap();
             }
             let command_buffer = builder.build().unwrap();
 

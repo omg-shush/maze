@@ -19,6 +19,14 @@ pub fn mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
     prod
 }
 
+pub fn add(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    let mut sum = a.clone();
+    for i in 0..3 {
+        sum[i] += b[i];
+    }
+    sum
+}
+
 pub fn rotate(rotation: [f32; 3]) -> [[f32; 4]; 4] {
     let t = rotation[0];
     let rot_x = transpose([
@@ -73,7 +81,7 @@ pub fn projection(near: f32, far: f32, focal: f32, aspect: f32) -> [[f32; 4]; 4]
     ])
 }
 
-pub fn identity() -> [[f32; 4]; 4] {
+pub fn _identity() -> [[f32; 4]; 4] {
     [
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
