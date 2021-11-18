@@ -19,12 +19,6 @@ impl Camera {
         self.position = position;
     }
 
-    pub fn adjust(&mut self, delta: [f32; 3]) {
-        for i in 0..3 {
-            self.position[i] += delta[i];
-        }
-    }
-
     pub fn turn(&mut self, delta: [f32; 3]) {
         for i in 0..3 {
             self.rotation[i] += delta[i];

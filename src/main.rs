@@ -217,8 +217,8 @@ fn main() {
         pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
     );
 
-    // Up, down, left, right, ascend, descend
-    let mut keys = [ElementState::Released; 6];
+    // Up, down, left, right, ascend, descend, fourth dec, fourth inc
+    let mut keys = [ElementState::Released; 8];
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -247,58 +247,71 @@ fn main() {
             match keycode {
                 VirtualKeyCode::W | VirtualKeyCode::Up => {
                     if state == ElementState::Pressed && keys[0] == ElementState::Released {
-                        if world.check_move(player.cell(), [0, -1, 0]) {
-                            player.move_position([0, -1, 0], seconds);
+                        if world.check_move(player.cell(), [0, -1, 0, 0]) {
+                            player.move_position([0, -1, 0, 0], seconds);
                         }
                     }
                     keys[0] = state;
                 },
                 VirtualKeyCode::S | VirtualKeyCode::Down => {
                     if state == ElementState::Pressed && keys[1] == ElementState::Released {
-                        if world.check_move(player.cell(), [0, 1, 0]) {
-                            player.move_position([0, 1, 0], seconds);
+                        if world.check_move(player.cell(), [0, 1, 0, 0]) {
+                            player.move_position([0, 1, 0, 0], seconds);
                         }
                     }
                     keys[1] = state
                 },
                 VirtualKeyCode::A | VirtualKeyCode::Left => {
                     if state == ElementState::Pressed && keys[2] == ElementState::Released {
-                        if world.check_move(player.cell(), [-1, 0, 0]) {
-                            player.move_position([-1, 0, 0], seconds);
+                        if world.check_move(player.cell(), [-1, 0, 0, 0]) {
+                            player.move_position([-1, 0, 0, 0], seconds);
                         }
                     }
                     keys[2] = state
                 },
                 VirtualKeyCode::D | VirtualKeyCode::Right => {
                     if state == ElementState::Pressed && keys[3] == ElementState::Released {
-                        if world.check_move(player.cell(), [1, 0, 0]) {
-                            player.move_position([1, 0, 0], seconds);
+                        if world.check_move(player.cell(), [1, 0, 0, 0]) {
+                            player.move_position([1, 0, 0, 0], seconds);
                         }
                     }
                     keys[3] = state
                 },
                 VirtualKeyCode::Space => {
                     if state == ElementState::Pressed && keys[4] == ElementState::Released {
-                        if world.check_move(player.cell(), [0, 0, 1]) {
-                            player.move_position([0, 0, 1], seconds);
+                        if world.check_move(player.cell(), [0, 0, 1, 0]) {
+                            player.move_position([0, 0, 1, 0], seconds);
                         }
                     }
                     keys[4] = state
                 },
                 VirtualKeyCode::LControl => {
                     if state == ElementState::Pressed && keys[5] == ElementState::Released {
-                        if world.check_move(player.cell(), [0, 0, -1]) {
-                            player.move_position([0, 0, -1], seconds);
+                        if world.check_move(player.cell(), [0, 0, -1, 0]) {
+                            player.move_position([0, 0, -1, 0], seconds);
                         }
                     }
                     keys[5] = state
                 },
+                VirtualKeyCode::Q => {
+                    if state == ElementState::Pressed && keys[6] == ElementState::Released {
+                        if world.check_move(player.cell(), [0, 0, 0, -1]) {
+                            player.move_position([0, 0, 0, -1], seconds);
+                        }
+                    }
+                },
+                VirtualKeyCode::E => {
+                    if state == ElementState::Pressed && keys[7] == ElementState::Released {
+                        if world.check_move(player.cell(), [0, 0, 0, 1]) {
+                            player.move_position([0, 0, 0, 1], seconds);
+                        }
+                    }
+                }
                 VirtualKeyCode::Return => {
                     if state == ElementState::Pressed && player.solve.is_none() {
-                        let mut delta = world.start;
-                        for i in 0..3 {
-                            delta[i] -= player.cell()[i];
-                        }
+                        let (sx, sy, sz, sw) = world.start;
+                        let (px, py, pz, pw) = (player.cell()[0], player.cell()[1], player.cell()[2], player.cell()[3]);
+                        let delta = [sx as i32 - px, sy as i32 - py, sz as i32 - pz, sw as i32 - pw];
                         player.move_position(delta, 0.0);
                         player.solve = Some((0, Instant::now() + Duration::from_secs(2)));
                         player.update();

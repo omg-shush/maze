@@ -54,9 +54,9 @@ pub fn rotate(rotation: [f32; 3]) -> [[f32; 4]; 4] {
 
 pub fn model(rotation: [f32; 3], scale: [f32; 3], translation: [f32; 3]) -> [[f32; 4]; 4] {
     let trans_scale = transpose([
-        [1.0, 0.0, 0.0, translation[0]].map(|x| x * scale[0]),
-        [0.0, 1.0, 0.0, translation[1]].map(|x| x * scale[1]),
-        [0.0, 0.0, 1.0, translation[2]].map(|x| x * scale[2]),
+        [scale[0], 0.0, 0.0, translation[0]],
+        [0.0, scale[1], 0.0, translation[1]],
+        [0.0, 0.0, scale[2], translation[2]],
         [0.0, 0.0, 0.0, 1.0]
     ]);
     mul(trans_scale, rotate(rotation))

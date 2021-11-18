@@ -3,6 +3,16 @@ use std::sync::Arc;
 use vulkano::image::SampleCount;
 use vulkano::device::Device;
 
+pub const RAINBOW: [[f32; 3]; 7] = [
+    [ 0.8, 0.2, 0.2 ],
+    [ 0.8, 0.4, 0.2 ],
+    [ 0.4, 0.8, 0.2 ],
+    [ 0.2, 0.8, 0.2 ],
+    [ 0.2, 0.4, 0.8 ],
+    [ 0.2, 0.2, 0.8 ],
+    [ 0.4, 0.2, 0.8 ]
+];
+
 #[derive(Debug)]
 pub struct Params {
     pub samples: u32,

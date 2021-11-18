@@ -10,6 +10,7 @@ use vulkano::device::{Device, Queue};
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::sync::GpuFuture;
 
+use crate::parameters::RAINBOW;
 use crate::world::World;
 use crate::camera::Camera;
 use crate::world;
@@ -17,14 +18,16 @@ use crate::linalg;
 use crate::pipeline::{InstanceModel, Pipeline};
 use crate::pipeline::cs::ty::Vertex;
 use crate::pipeline::fs::ty::PlayerPositionData;
+use crate::pipeline::vs::ty::ViewProjectionData;
 
 const CAMERA_OFFSET: [f32; 3] = [0.0, 1.6, 4.0];
 
 pub struct Player {
-    dest_position: [i32; 3],
-    position: [f32; 3],
+    dest_position: [i32; 4],
+    position: [f32; 4],
     dest_speed: f32,
     last_update: Instant,
+    reach_dest: Instant,
     world: Rc<RefCell<World>>,
     pub complete: bool,
     pub solve: Option<(usize, Instant)>,
@@ -36,16 +39,16 @@ pub struct Player {
 
 impl Player {
     pub fn new(device: Arc<Device>, queue: Arc<Queue>, world: Rc<RefCell<World>>) -> (Box<Player>, Box<dyn GpuFuture>) {
-        const INITIAL_POSITION: [f32; 3] = [0.0, 0.0, 0.0];
         let (vertex_buffer, future) = ImmutableBuffer::from_iter(
             player_buffer().into_iter(),
             BufferUsage::vertex_buffer(),
             queue).unwrap();
         let mut p = Player {
-            dest_position: [0, 0, 0],
-            position: INITIAL_POSITION,
+            dest_position: [0, 0, 0, 0],
+            position: [0.0, 0.0, 0.0, 0.0],
             dest_speed: 0.0,
             last_update: Instant::now(),
+            reach_dest: Instant::now(),
             world: world,
             complete: false,
             solve: None,
@@ -62,10 +65,10 @@ impl Player {
 
     pub fn render(&self, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
         let instance_buffer = self.instance_buffer_pool.next([
-            InstanceModel { m: linalg::model([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], self.position) }
+            InstanceModel { m: linalg::model([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], self.position[0..3].try_into().unwrap()) }
         ]).unwrap();
         let player_position_buffer = self.player_position_buffer_pool.next(
-            PlayerPositionData { pos: linalg::add(self.position, [0.0, 0.0, 0.8]) }).unwrap();
+            PlayerPositionData { pos: linalg::add(self.position[0..3].try_into().unwrap(), [0.0, 0.0, 0.8]) }).unwrap();
         let descripter_set = {
             let mut builder = desc_set_pool.next();
             builder.add_buffer(Arc::new(player_position_buffer)).unwrap();
@@ -78,9 +81,10 @@ impl Player {
                 PipelineBindPoint::Graphics,
                 pipeline.graphics_pipeline.layout().clone(),
                 0,
-                descripter_set
-            )
-            .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, view_projection)
+                descripter_set)
+            .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, ViewProjectionData {
+                vp: view_projection,
+                pushColor: RAINBOW[self.cell()[3] as usize % RAINBOW.len()]})
             .draw(
                 self.vertex_buffer.len() as u32,
                 instance_buffer.len() as u32,
@@ -88,11 +92,12 @@ impl Player {
                 0).unwrap();
     }
 
-    pub fn move_position(&mut self, delta: [i32; 3], seconds: f32) {
-        for i in 0..3 {
+    pub fn move_position(&mut self, delta: [i32; 4], seconds: f32) {
+        for i in 0..delta.len() {
             self.dest_position[i] += delta[i];
         }
         self.last_update = Instant::now();
+        self.reach_dest = self.last_update + Duration::from_secs_f32(seconds);
         if seconds <= 0.1 {
             self.position = self.dest_position.map(|i| i as f32);
         } else {
@@ -101,11 +106,11 @@ impl Player {
         }
     }
 
-    pub fn get_position(&self) -> [f32; 3] {
+    pub fn get_position(&self) -> [f32; 4] {
         self.position
     }
 
-    pub fn cell(&self) -> [i32; 3] {
+    pub fn cell(&self) -> [i32; 4] {
         self.dest_position
     }
 
@@ -113,13 +118,18 @@ impl Player {
         let now = Instant::now();
 
         // Interpolate position
-        let delta: [f32; 3] = [0, 1, 2].map(|i| (self.dest_position[i] as f32 - self.position[i]) * self.dest_speed * (now - self.last_update).as_secs_f32());
-        let mut camera_pos = [0.0; 3];
-        for i in 0..3 {
-            self.position[i] += delta[i];
-            camera_pos[i] = self.position[i] + CAMERA_OFFSET[i];
+        if now > self.reach_dest {
+            self.position = self.dest_position.map(|i| i as f32);
+            self.camera.position(linalg::add(self.position[0..3].try_into().unwrap(), CAMERA_OFFSET));
+        } else {
+            let delta: [f32; 3] = [0, 1, 2].map(|i| (self.dest_position[i] as f32 - self.position[i]) * self.dest_speed * (now - self.last_update).as_secs_f32());
+            let mut camera_pos = [0.0; 3];
+            for i in 0..3 {
+                self.position[i] += delta[i];
+                camera_pos[i] = self.position[i] + CAMERA_OFFSET[i];
+            }
+            self.camera.position(camera_pos);
         }
-        self.camera.position(camera_pos);
 
         // Auto-solve
         const MOVE_TIME: f32 = 0.5;
@@ -127,7 +137,7 @@ impl Player {
             if now > time {
                 let n = self.world.borrow_mut().solution[i];
                 let p = self.cell();
-                self.move_position([n[0] - p[0], n[1] - p[1], n[2] - p[2]], MOVE_TIME);
+                self.move_position([n[0] - p[0], n[1] - p[1], n[2] - p[2], n[3] - p[3]], MOVE_TIME);
                 if i + 1 < self.world.borrow_mut().solution.len() {
                     let next_move = now + Duration::from_secs_f32(MOVE_TIME);
                     self.solve = Some((i + 1, next_move));
@@ -138,9 +148,8 @@ impl Player {
         }
 
         // Tracking camera
-        self.camera.adjust(delta);
-        let mut pos = self.position.clone();
-        for i in 0..3 {
+        let mut pos: [f32; 3] = self.position.clone()[0..3].try_into().unwrap();
+        for i in 0..CAMERA_OFFSET.len() {
             pos[i] += CAMERA_OFFSET[i];
         }
         self.camera.position(pos);
