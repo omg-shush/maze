@@ -1,26 +1,36 @@
 use std::sync::Arc;
+use std::env;
 
 use vulkano::image::SampleCount;
 use vulkano::device::Device;
 
-pub const RAINBOW: [[f32; 3]; 7] = [
-    [ 0.8, 0.2, 0.2 ],
-    [ 0.8, 0.4, 0.2 ],
-    [ 0.4, 0.8, 0.2 ],
-    [ 0.2, 0.8, 0.2 ],
-    [ 0.2, 0.4, 0.8 ],
-    [ 0.2, 0.2, 0.8 ],
-    [ 0.4, 0.2, 0.8 ]
+pub const RAINBOW: [[f32; 3]; 6] = [
+    [ 1.000, 0.427, 0.416 ],
+    [ 0.937, 0.745, 0.490 ],
+    [ 0.914, 0.925, 0.420 ],
+    [ 0.467, 0.867, 0.467 ],
+    [ 0.545, 0.827, 0.902 ],
+    [ 0.694, 0.635, 0.792 ]
 ];
 
 #[derive(Debug)]
 pub struct Params {
     pub samples: u32,
-    pub sample_count: SampleCount
+    pub sample_count: SampleCount,
+    pub dimensions: [usize; 4]
 }
 
 impl Params {
     pub fn new(device: Arc<Device>) -> Params {
+        let dimensions: Vec<String> = env::args().collect();
+        // First arg is path to executable
+        let dimensions: [usize; 4] =
+            if dimensions.len() != 5 {
+                [4, 4, 4, 4]
+            } else {
+                [&dimensions[1], &dimensions[2], &dimensions[3], &dimensions[4]].map(|s| s.parse::<usize>().unwrap())
+            };
+
         let (samples, sample_count) = [
                 (device.physical_device().properties().framebuffer_color_sample_counts.sample1, 1, SampleCount::Sample1),
                 (device.physical_device().properties().framebuffer_color_sample_counts.sample2, 2, SampleCount::Sample2),
@@ -34,8 +44,9 @@ impl Params {
             .max_by_key(|(i, _sc)| *i)
             .expect("No framebuffer color sampling options available");
         Params {
-            samples: samples,
-            sample_count: sample_count
+            samples,
+            sample_count,
+            dimensions
         }
     }
 }

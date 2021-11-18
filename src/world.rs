@@ -22,12 +22,7 @@ use crate::pipeline::fs::ty::PlayerPositionData;
 use crate::player::Player;
 use crate::model::Model;
 use crate::pipeline::vs::ty::ViewProjectionData;
-use crate::parameters::RAINBOW;
-
-pub const WIDTH: usize = 10;
-pub const HEIGHT: usize = 10;
-pub const DEPTH: usize = 10;
-pub const FOURTH: usize = 10;
+use crate::parameters::{Params, RAINBOW};
 
 type Coordinate = (usize, usize, usize, usize);
 
@@ -80,15 +75,20 @@ impl From<Vec<Arc<ImmutableBuffer<[InstanceModel]>>>> for LevelBuffers {
 }
 
 pub struct World {
-    // Dimensions: FOURTH x DEPTH x HEIGHT x WIDTH
+    pub width: usize,
+    pub height: usize,
+    pub depth: usize,
+    pub fourth: usize,
+
+    // Dimensions: fourth x depth x height x width
     pub cells: Box<[Box<[Box<[Box<[Cell]>]>]>]>,
-    // Vertical walls, FOURTH x DEPTH x HEIGHT x (WIDTH + 1)
+    // Vertical walls, fourth x depth x height x (width + 1)
     pub xwalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
-    // Horizontal walls, FOURTH x DEPTH x (HEIGHT + 1) x WIDTH
+    // Horizontal walls, fourth x depth x (height + 1) x width
     pub ywalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
-    // Floors/Ceilings, FOURTH x (DEPTH + 1) x HEIGHT x WIDTH
+    // Floors/Ceilings, fourth x (depth + 1) x height x width
     pub zwalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
-    // I don't even know any more, (FOURTH + 1) x DEPTH x HEIGHT x WIDTH
+    // I don't even know any more, (fourth + 1) x depth x height x width
     pub wwalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
 
     pub start: Coordinate,
@@ -100,23 +100,28 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(queue: Arc<Queue>) -> (Rc<RefCell<World>>, Box<dyn GpuFuture>) {
+    pub fn new(params: &Params, queue: Arc<Queue>) -> (Rc<RefCell<World>>, Box<dyn GpuFuture>) {
         // Start by creating a 2D grid, with walls around each cell
+        let [width, height, depth, fourth] = params.dimensions;
         let mut world = World {
-            cells: vec![vec![vec![vec![Cell::Empty; WIDTH].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH].into_boxed_slice(); FOURTH].into_boxed_slice(),
-            xwalls: vec![vec![vec![vec![Wall::SolidWall; WIDTH + 1].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH].into_boxed_slice(); FOURTH].into_boxed_slice(),
-            ywalls: vec![vec![vec![vec![Wall::SolidWall; WIDTH].into_boxed_slice(); HEIGHT + 1].into_boxed_slice(); DEPTH].into_boxed_slice(); FOURTH].into_boxed_slice(),
-            zwalls: vec![vec![vec![vec![Wall::SolidWall; WIDTH].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH + 1].into_boxed_slice(); FOURTH].into_boxed_slice(),
-            wwalls: vec![vec![vec![vec![Wall::SolidWall; WIDTH].into_boxed_slice(); HEIGHT].into_boxed_slice(); DEPTH].into_boxed_slice(); FOURTH + 1].into_boxed_slice(),
+            cells: vec![vec![vec![vec![Cell::Empty; width].into_boxed_slice(); height].into_boxed_slice(); depth].into_boxed_slice(); fourth].into_boxed_slice(),
+            xwalls: vec![vec![vec![vec![Wall::SolidWall; width + 1].into_boxed_slice(); height].into_boxed_slice(); depth].into_boxed_slice(); fourth].into_boxed_slice(),
+            ywalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height + 1].into_boxed_slice(); depth].into_boxed_slice(); fourth].into_boxed_slice(),
+            zwalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height].into_boxed_slice(); depth + 1].into_boxed_slice(); fourth].into_boxed_slice(),
+            wwalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height].into_boxed_slice(); depth].into_boxed_slice(); fourth + 1].into_boxed_slice(),
             start: (0, 0, 0, 0),
-            finish: (WIDTH - 1, HEIGHT - 1, DEPTH - 1, FOURTH - 1),
+            finish: (width - 1, height - 1, depth - 1, fourth - 1),
             solution: Vec::new(),
             player_position_buffer_pool: CpuBufferPool::new(queue.device().clone(), BufferUsage::uniform_buffer()),
-            vertex_buffers: Vec::new()
+            vertex_buffers: Vec::new(),
+            width,
+            height,
+            depth,
+            fourth
         };
         world.generate_maze();
         
-        let world_data: Vec<Vec<LevelInstances>> = (0..FOURTH).map(|fourth| (0..DEPTH).map(|level| world.vertex_buffer(fourth, level)).collect()).collect();
+        let world_data: Vec<Vec<LevelInstances>> = (0..fourth).map(|fourth| (0..depth).map(|level| world.vertex_buffer(fourth, level)).collect()).collect();
         let world_buffer: Vec<Vec<_>> =
             world_data.into_iter().map(|fourths| {
                 fourths.into_iter().map(|instance_buffers| {
@@ -166,15 +171,30 @@ impl World {
             );
         let view_projection = linalg::mul(player.camera.projection(), player.camera.view());
 
-        let fourth = player.cell()[3] as usize; // TODO animate f32 w coordinate
+        let fourth = player.cell()[3];
+        let between = player.get_position()[3];
+        fn world_transform(world: &World, fourth: usize, between: f32) -> [[f32; 4]; 4] {
+            let spacing = (world.width + 1) as f32;
+            linalg::translate([(fourth as f32 - between) * spacing, 0.0, 0.0])
+        }
+
+        for w in fourth - 1..fourth + 2 {
+            if w >= 0 && w < self.fourth as i32 {
+                let w = w as usize;
+                let wvp = linalg::mul(view_projection, world_transform(self, w, between));
+                self.render_fourth(w, wvp, player, models, builder, pipeline);
+            }
+        }
+    }
+
+    fn render_fourth(&self, fourth: usize, view_projection: [[f32; 4]; 4], player: &Box<Player>, models: &HashMap<String, Box<Model>>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
         let fourth_color = RAINBOW[fourth % RAINBOW.len()];
         let left_color = RAINBOW[(fourth as i32 - 1).rem_euclid(RAINBOW.len() as i32) as usize];
-        let right_color = RAINBOW[fourth + 1 % RAINBOW.len()];
-        let corner_color = fourth_color.map(|f| (f * 0.2).clamp(0.0, 1.0));
-        let floor_color = fourth_color.map(|f| f * 0.6);
-        let ascend_color = fourth_color.map(|f| (f * 1.2).clamp(0.0, 1.0));
-
-        let (min_level, max_level) = ((player.cell()[2] - 6).clamp(0, DEPTH as i32) as usize, player.cell()[2] as usize);
+        let right_color = RAINBOW[(fourth + 1) % RAINBOW.len()];
+        let corner_color = fourth_color.map(|f| (f * 1.2).clamp(0.0, 1.0));
+        let floor_color = fourth_color.map(|f| f * 0.1);
+        let ascend_color = [1.0, 1.0, 1.0];
+        let (min_level, max_level) = ((player.cell()[2] - 6).clamp(0, self.depth as i32) as usize, player.cell()[2] as usize);
         for level in min_level..max_level + 1 {
             let level_buffers = &self.vertex_buffers[fourth][level];
             builder
@@ -259,10 +279,10 @@ impl World {
             WWall (Coordinate)
         }
         let mut edges: Vec<MazeEdge> = Vec::new();
-        for w in 0..FOURTH {
-            for z in 0..DEPTH {
-                for y in 0..HEIGHT {
-                    for x in 0..WIDTH {
+        for w in 0..self.fourth {
+            for z in 0..self.depth {
+                for y in 0..self.height {
+                    for x in 0..self.width {
                         if x != 0 {
                             edges.push(MazeEdge::XWall((x, y, z, w)))
                         }
@@ -283,10 +303,10 @@ impl World {
 
         // Initialize disjoint set of cells
         let mut cells = disjoint_set::DisjointSet::new();
-        for w in 0..FOURTH {
-            for z in 0..DEPTH {
-                for y in 0..HEIGHT {
-                    for x in 0..WIDTH {
+        for w in 0..self.fourth {
+            for z in 0..self.depth {
+                for y in 0..self.height {
+                    for x in 0..self.width {
                         // Use tuples to hash correctly hopefully
                         cells.add(&(x, y, z, w));
                     }
@@ -332,7 +352,7 @@ impl World {
         // Results in minimum spanning tree connecting all cells of maze
 
         // Generate exit at bottom right corner of top layer in last w
-        self.xwalls[FOURTH - 1][DEPTH - 1][HEIGHT - 1][WIDTH] = Wall::NoWall;
+        self.xwalls[self.fourth - 1][self.depth - 1][self.height - 1][self.width] = Wall::NoWall;
 
         // Use breadth-first search to find solution
         let mut queue: VecDeque<Coordinate> = VecDeque::new();
@@ -345,7 +365,7 @@ impl World {
             let cell = queue.pop_front().unwrap();
 
             // Add unvisited neighbors to the queue
-            for n in neighbors.get(&cell).unwrap() {
+            for n in neighbors.get(&cell).unwrap_or(&Vec::new()) {
                 if !visited.contains(n) {
                     visited.insert(*n);
                     queue.push_back(*n);
@@ -461,8 +481,8 @@ impl World {
 
         // Generate wall corners
         let mut corners: Vec<InstanceModel> = Vec::new();
-        for x in 0..WIDTH + 1 {
-            for y in 0..HEIGHT + 1 {
+        for x in 0..self.width + 1 {
+            for y in 0..self.height + 1 {
                 // Draw a wall corner between cells (x - 1, y - 1, z) and (x, y, z)
                 let (x, y, z) = (x as f32 - 0.5, y as f32 - 0.5, z as f32);
                 corners.push(InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) });

@@ -27,6 +27,15 @@ pub fn add(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     sum
 }
 
+pub fn translate(translation: [f32; 3]) -> [[f32; 4]; 4] {
+    transpose([
+        [1.0, 0.0, 0.0, translation[0]],
+        [0.0, 1.0, 0.0, translation[1]],
+        [0.0, 0.0, 1.0, translation[2]],
+        [0.0, 0.0, 0.0, 1.0]
+    ])
+}
+
 pub fn rotate(rotation: [f32; 3]) -> [[f32; 4]; 4] {
     let t = rotation[0];
     let rot_x = transpose([

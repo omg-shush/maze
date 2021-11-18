@@ -41,6 +41,8 @@ mod player;
 mod linalg;
 mod model;
 
+const NAME: &str = "maze or something i guess v0.1";
+
 fn main() {
     // Create vulkan instance
     let app_infos = ApplicationInfo {
@@ -71,14 +73,10 @@ fn main() {
         .. DeviceExtensions::none()
     };
     let draw_queue = card.queue_families().find(|&q| q.supports_graphics()).unwrap();
-    let transfer_queue = card.queue_families().find(|&q| q.explicitly_supports_transfers()).unwrap();
-    let queues = [(draw_queue, 1.0), (transfer_queue, 0.0)];
-
+    let queues = [(draw_queue, 1.0)];
     let (device, mut qs) = Device::new(card, &features, &extensions, queues.iter().cloned()).unwrap();
-    println!("Created logical vulkan device {:?}", device);
-
     let draw_queue = qs.next().unwrap();
-    let _transfer_queue = qs.next().unwrap();
+    println!("Created logical vulkan device {:?}", device);
 
     // Create window
     let event_loop = EventLoop::new();
@@ -86,7 +84,7 @@ fn main() {
         .with_inner_size(LogicalSize { width: 800, height: 800 })
         .with_position(PhysicalPosition { x : 300, y: 200 })
         .with_resizable(false)
-        .with_title("maze or something i guess")
+        .with_title(NAME)
         .build_vk_surface(&event_loop, instance.clone()).unwrap();
 
     // Configure parameters
@@ -128,7 +126,7 @@ fn main() {
     }).into_iter().collect();
 
     // Generate world data
-    let (world, world_init_future) = world::World::new(draw_queue.clone());
+    let (world, world_init_future) = world::World::new(&params, draw_queue.clone());
     let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone(), world.clone());
     init_futures.push(world_init_future);
     init_futures.push(player_init_future);
@@ -136,6 +134,16 @@ fn main() {
     let init_future = init_futures.into_iter().fold(sync::now(device.clone()).boxed(), |acc, future| {
         acc.join(future).boxed()
     }).then_signal_fence_and_flush().expect("Flushing init commands failed");
+
+    println!("---------------------------");
+    println!("{0}", NAME);
+    println!("WASD or Arrow Keys to move horizontally");
+    println!("SPACE to move up, LeftControl to move down");
+    println!("Q and E to move through left and right portals");
+    println!("ENTER to play solution");
+    println!("green screen = win");
+    println!("Specify custom dimensions as command line arguments, eg:");
+    println!("    maze.exe 10 10 10 10");
 
     // Use compute shader to elaborate vertex data
     // let vertex_buffer: Vec<Arc<DeviceLocalBuffer<[Vertex]>>> = world_buffer.iter().map(|level_buffer| {
@@ -242,7 +250,7 @@ fn main() {
             if player.complete || player.solve.is_some() {
                 return;
             }
-            let world = world.borrow_mut();
+            let world = world.borrow();
             let seconds = 0.5;
             match keycode {
                 VirtualKeyCode::W | VirtualKeyCode::Up => {
@@ -313,7 +321,7 @@ fn main() {
                         let (px, py, pz, pw) = (player.cell()[0], player.cell()[1], player.cell()[2], player.cell()[3]);
                         let delta = [sx as i32 - px, sy as i32 - py, sz as i32 - pz, sw as i32 - pw];
                         player.move_position(delta, 0.0);
-                        player.solve = Some((0, Instant::now() + Duration::from_secs(2)));
+                        player.solve = Some((0, Instant::now() + Duration::from_secs(1)));
                         player.update();
                     }
                 }

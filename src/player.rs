@@ -13,7 +13,6 @@ use vulkano::sync::GpuFuture;
 use crate::parameters::RAINBOW;
 use crate::world::World;
 use crate::camera::Camera;
-use crate::world;
 use crate::linalg;
 use crate::pipeline::{InstanceModel, Pipeline};
 use crate::pipeline::cs::ty::Vertex;
@@ -120,15 +119,11 @@ impl Player {
         // Interpolate position
         if now > self.reach_dest {
             self.position = self.dest_position.map(|i| i as f32);
-            self.camera.position(linalg::add(self.position[0..3].try_into().unwrap(), CAMERA_OFFSET));
         } else {
-            let delta: [f32; 3] = [0, 1, 2].map(|i| (self.dest_position[i] as f32 - self.position[i]) * self.dest_speed * (now - self.last_update).as_secs_f32());
-            let mut camera_pos = [0.0; 3];
-            for i in 0..3 {
+            let delta = [0, 1, 2, 3].map(|i| (self.dest_position[i] as f32 - self.position[i]) * self.dest_speed * (now - self.last_update).as_secs_f32());
+            for i in 0..delta.len() {
                 self.position[i] += delta[i];
-                camera_pos[i] = self.position[i] + CAMERA_OFFSET[i];
             }
-            self.camera.position(camera_pos);
         }
 
         // Auto-solve
@@ -148,14 +143,10 @@ impl Player {
         }
 
         // Tracking camera
-        let mut pos: [f32; 3] = self.position.clone()[0..3].try_into().unwrap();
-        for i in 0..CAMERA_OFFSET.len() {
-            pos[i] += CAMERA_OFFSET[i];
-        }
-        self.camera.position(pos);
+        self.camera.position(linalg::add(self.position[0..3].try_into().unwrap(), CAMERA_OFFSET));
 
         // Check for victory
-        if self.position[0].round() as usize >= world::WIDTH {
+        if self.position[0].round() as usize >= self.world.borrow().width {
             self.complete = true;
         }
     }
