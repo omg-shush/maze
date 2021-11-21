@@ -12,7 +12,7 @@ use winit::window::{WindowBuilder};
 use winit::dpi::{PhysicalPosition, LogicalSize};
 
 use vulkano::device::{Device, Features, DeviceExtensions};
-use vulkano::device::physical::{PhysicalDevice};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::instance::{Instance, ApplicationInfo};
 use vulkano::Version;
 use vulkano::image::ImageUsage;
@@ -57,10 +57,12 @@ fn main() {
     //     println!("Layer: {}", layer.name())
     // }
 
-    // for device in PhysicalDevice::enumerate(&instance) {
-    //     println!("Device: {}", device.properties().device_name)
-    // }
-    let card = PhysicalDevice::enumerate(&instance).next().unwrap();
+    let card = {
+        let card_list = PhysicalDevice::enumerate(&instance).collect::<Vec<_>>();
+        println!("Card list: {:?}", card_list.iter().map(|c| c.properties().device_name.clone()).collect::<Vec<_>>());
+        let mut discrete_list = card_list.clone().into_iter().filter(|c| c.properties().device_type == PhysicalDeviceType::DiscreteGpu);
+        discrete_list.next().unwrap_or(card_list[0])
+    };
     println!("Using card {}", card.properties().device_name);
 
     // Create logical device
@@ -94,7 +96,8 @@ fn main() {
     // Create swapchain
     let surface_caps = surface.capabilities(card).unwrap();
     let resolution = surface_caps.max_image_extent;
-    let buffers = 2;
+    let buffers = 2.clamp(surface_caps.min_image_count, surface_caps.max_image_count.unwrap_or(u32::MAX));
+    println!("Using {} buffers. Min ({}) max {:?}", buffers, surface_caps.min_image_count, surface_caps.max_image_count);
     let transform = surface_caps.current_transform;
     let (format, _color_space) = surface_caps.supported_formats[0];
     let usage = ImageUsage {
