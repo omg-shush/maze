@@ -31,6 +31,7 @@ use pipeline::cs::ty::Vertex;
 use parameters::Params;
 use player::Player;
 use model::Model;
+use ui::UserInterface;
 
 mod world;
 mod pipeline;
@@ -40,6 +41,8 @@ mod parameters;
 mod player;
 mod linalg;
 mod model;
+mod texture;
+mod ui;
 
 const NAME: &str = "maze or something i guess v0.1";
 
@@ -128,9 +131,11 @@ fn main() {
         (model.file.to_owned(), model)
     }).into_iter().collect();
 
-    // Generate world data
+    // Initialize game elements
+    let (mut ui, ui_future) = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone());
     let (world, world_init_future) = world::World::new(&params, draw_queue.clone());
     let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone(), world.clone());
+    init_futures.push(ui_future);
     init_futures.push(world_init_future);
     init_futures.push(player_init_future);
 
@@ -412,6 +417,7 @@ fn main() {
 
                 world.borrow().render(&models, &player, &mut desc_set_pool, &mut builder, &pipeline);
                 player.render(&mut desc_set_pool, &mut builder, &pipeline);
+                ui.render(&player, &mut builder);
                 
                 builder.end_render_pass().unwrap();
             }
