@@ -132,7 +132,7 @@ fn main() {
     }).into_iter().collect();
 
     // Initialize game elements
-    let (mut ui, ui_future) = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone());
+    let (ui, ui_future) = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone());
     let (world, world_init_future) = world::World::new(&params, draw_queue.clone());
     let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone(), world.clone());
     init_futures.push(ui_future);

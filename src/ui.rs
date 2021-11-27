@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
+use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint};
@@ -17,8 +17,19 @@ use crate::texture::Texture;
 pub struct UserInterface {
     textures: HashMap<String, Texture>,
     graphics_pipeline: Arc<GraphicsPipeline>,
-    desc_set: Arc<PersistentDescriptorSet>,
-    rect_buffer: Arc<CpuAccessibleBuffer<[UIVertex; 6]>>
+    rect_buffer: Arc<CpuAccessibleBuffer<[UIVertex; 6]>>,
+    elements: Vec<UIElement>
+}
+
+struct UIElement {
+    texture_descriptor: Arc<PersistentDescriptorSet>,
+    size_offset: SizeOffset
+}
+
+#[derive(Clone, Copy)]
+struct SizeOffset {
+    size: [f32; 2],
+    offset: [f32; 2]
 }
 
 impl UserInterface {
@@ -53,26 +64,38 @@ impl UserInterface {
             BufferUsage::vertex_buffer(),
             false,
             [
-                [0.0, 0.0],
-                [0.0, 1.0],
-                [1.0, 0.0],
-                [1.0, 0.0],
-                [0.0, 1.0],
-                [1.0, 1.0]
-            ].map(|xy| UIVertex { position: xy, uv: xy })).unwrap();
+                [-1.0, -1.0],
+                [-1.0,  1.0],
+                [ 1.0, -1.0],
+                [ 1.0, -1.0],
+                [-1.0,  1.0],
+                [ 1.0,  1.0]
+            ].map(|xy| UIVertex { position: xy, uv: xy.map(|f| f.clamp(0.0, 1.0)) })).unwrap();
 
-        (UserInterface { textures, graphics_pipeline, desc_set, rect_buffer }, future)
+        // Build UI elements
+        let up = UIElement { texture_descriptor: desc_set, size_offset: SizeOffset { size: [0.1, 0.1], offset: [0.9, 0.9] } };
+        let elements = vec![up];
+
+        (UserInterface { textures, graphics_pipeline, rect_buffer, elements }, future)
     }
 
-    pub fn render(&mut self, player: &Box<Player>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+    pub fn render(&self, player: &Box<Player>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
         builder
-            .bind_pipeline_graphics(self.graphics_pipeline.clone())
-            .bind_descriptor_sets(PipelineBindPoint::Graphics,
-                self.graphics_pipeline.layout().clone(),
+            .bind_pipeline_graphics(self.graphics_pipeline.clone());
+        let layout = self.graphics_pipeline.layout();
+        // Render each UI element
+        for element in self.elements.iter() {
+            builder
+                .bind_descriptor_sets(PipelineBindPoint::Graphics,
+                    layout.clone(),
+                    0,
+                    element.texture_descriptor.clone())
+                .push_constants(layout.clone(),
                 0,
-                self.desc_set.clone())
-            .bind_vertex_buffers(0, self.rect_buffer.clone())
-            .draw(6, 1, 0, 0).unwrap();
+                element.size_offset)
+                .bind_vertex_buffers(0, self.rect_buffer.clone())
+                .draw(6, 1, 0, 0).unwrap();
+        }
     }
 }
 
@@ -109,9 +132,13 @@ pub mod vs {
         #version 450
         layout(location = 0) in vec2 position;
         layout(location = 1) in vec2 uv;
+        layout(push_constant) uniform SizeOffset {
+            vec2 size;
+            vec2 offset;
+        } ps;
         layout(location = 0) out vec2 passUv;
         void main() {
-            gl_Position = vec4(position, 0.0, 1.0);
+            gl_Position = vec4(position * ps.size + ps.offset, 0.0, 1.0);
             passUv = uv;
         }
         ",
