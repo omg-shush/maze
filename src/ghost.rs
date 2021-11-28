@@ -12,7 +12,7 @@ use vulkano::descriptor_set::SingleLayoutDescSetPool;
 use vulkano::pipeline::PipelineBindPoint;
 
 use crate::pipeline::InstanceModel;
-use crate::player::Player;
+use crate::player::{GameState, Player};
 use crate::world::World;
 use crate::parameters::Params;
 use crate::pipeline::cs::ty::Vertex;
@@ -38,7 +38,7 @@ pub struct Ghost {
 impl Ghost {
     pub fn new(params: &Params, queue: Arc<Queue>, world: Rc<RefCell<World>>, color: [f32; 3]) -> (Ghost, Box<dyn GpuFuture>) {
         let mut rng = thread_rng();
-        let dest_position = params.dimensions.map(|d| rng.gen_range(0..d));
+        let dest_position = params.dimensions.map(|d| rng.gen_range(d/2..d));
         let position = dest_position.map(|i| i as f32);
 
         let (vertex_buffer, future) = ImmutableBuffer::from_iter(
@@ -61,17 +61,19 @@ impl Ghost {
         }, future.boxed())
     }
 
-    pub fn update(&mut self, player: &Box<Player>) {
+    pub fn update(&mut self, player: &mut Player) {
         let now = Instant::now();
+        
+        // Did we reach the player?
+        let player_dist = linalg::sub(self.position, player.get_position()).map(|i| i * i).iter().fold(0.0, |acc, i| acc + i);
+        if player_dist < 0.2 {
+            player.game_state = GameState::Lost; // Player defeat
+                return;
+        }
+
         if now > self.reach_dest {
             self.position = self.dest_position.map(|i| i as f32);
             self.init_position = self.dest_position;
-            // Did we reach the player?
-            if self.dest_position == player.cell().map(|i| i as usize) {
-                // Player defeat
-                // TODO
-                return;
-            }
             // Otherwise, use BFS to track player
             let ghost_pos = (self.dest_position[0] as usize, self.dest_position[1] as usize, self.dest_position[2] as usize, self.dest_position[3] as usize);
             let player_pos = (player.cell()[0] as usize, player.cell()[1] as usize, player.cell()[2] as usize, player.cell()[3] as usize);

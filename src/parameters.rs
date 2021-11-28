@@ -19,7 +19,8 @@ pub struct Params {
     pub sample_count: SampleCount,
     pub dimensions: [usize; 4],
     pub ghost_move_time: f32,
-    pub fps: f32
+    pub fps: f32,
+    pub food: usize
 }
 
 impl Params {
@@ -49,8 +50,9 @@ impl Params {
             samples,
             sample_count,
             dimensions,
-            ghost_move_time: 1.0,
-            fps: 60.0
+            ghost_move_time: 0.8,
+            fps: 60.0,
+            food: 10
         }
     }
 }

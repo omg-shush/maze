@@ -14,20 +14,26 @@ use vulkano::impl_vertex;
 use crate::player::Player;
 use crate::texture::Texture;
 
+const DIGIT_WIDTH: f32 = 1.0 / 10.0;
+const DIGIT_HEIGHT: f32 = 80.0 / 512.0;
+
 pub struct UserInterface {
     textures: HashMap<String, Texture>,
     graphics_pipeline: Arc<GraphicsPipeline>,
     rect_buffer: Arc<CpuAccessibleBuffer<[UIVertex; 6]>>,
-    elements: Vec<UIElement>
+    elements: Vec<UIElement>,
+    digits: Vec<UIElement>
 }
 
+#[derive(Clone)]
 struct UIElement {
     texture_descriptor: Arc<PersistentDescriptorSet>,
-    size_offset: SizeOffset
+    shader_constant: ShaderConstant
 }
 
 #[derive(Clone, Copy)]
-struct SizeOffset {
+struct ShaderConstant {
+    texture_region: [f32; 4],
     size: [f32; 2],
     offset: [f32; 2]
 }
@@ -37,7 +43,8 @@ impl UserInterface {
         // Load textures
         let mut futures = Vec::new();
         let textures: HashMap<String, Texture> = [
-            Texture::new(queue.clone(), "up.png")
+            Texture::new(queue.clone(), "up.png"),
+            Texture::new(queue.clone(), "digits.png")
         ].map(|(texture, future)| {
             futures.push(future);
             (texture.file.to_owned(), texture)
@@ -54,7 +61,7 @@ impl UserInterface {
         let layout = graphics_pipeline.layout().descriptor_set_layouts()[0].clone();
         let desc_set = {
             let mut builder = PersistentDescriptorSet::start(layout.clone());
-            builder.add_sampled_image(textures.get("up.png").unwrap().access(), sampler).unwrap();
+            builder.add_sampled_image(textures.get("up.png").unwrap().access(), sampler.clone()).unwrap();
             Arc::new(builder.build().unwrap())
         };
 
@@ -73,18 +80,41 @@ impl UserInterface {
             ].map(|xy| UIVertex { position: xy, uv: xy.map(|f| f.clamp(0.0, 1.0)) })).unwrap();
 
         // Build UI elements
-        let up = UIElement { texture_descriptor: desc_set, size_offset: SizeOffset { size: [0.1, 0.1], offset: [0.9, 0.9] } };
-        let elements = vec![up];
+        let up = UIElement {
+            texture_descriptor: desc_set,
+            shader_constant: ShaderConstant { texture_region: [0.0, 0.0, 1.0, 1.0], size: [0.1, 0.1], offset: [0.9, 0.9] }
+        };
+        let elements = vec![];
 
-        (UserInterface { textures, graphics_pipeline, rect_buffer, elements }, future)
+        let digits_desc_set = {
+            let mut builder = PersistentDescriptorSet::start(layout.clone());
+            builder.add_sampled_image(textures.get("digits.png").unwrap().access(), sampler.clone()).unwrap();
+            Arc::new(builder.build().unwrap())
+        };
+        let digits: Vec<UIElement> = (0..=9).map(|i| {
+            UIElement { texture_descriptor: digits_desc_set.clone(), shader_constant: ShaderConstant {
+                texture_region: [DIGIT_WIDTH * i as f32, 0.0, DIGIT_WIDTH * (i + 1) as f32, DIGIT_HEIGHT],
+                size: [DIGIT_WIDTH, DIGIT_HEIGHT],
+                offset: [0.0, 0.0] // Will be set later, when needed
+            } }
+        }).collect();
+
+        (UserInterface { textures, graphics_pipeline, rect_buffer, elements, digits }, future)
     }
 
     pub fn render(&self, player: &Box<Player>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+        // Display player's score
+        let mut ones = self.digits[player.score as usize % 10].clone();
+        ones.shader_constant.offset = [1.0 - DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
+        let score = [ones];
+
+        let elements = self.elements.iter().chain(score.iter());
+
         builder
             .bind_pipeline_graphics(self.graphics_pipeline.clone());
         let layout = self.graphics_pipeline.layout();
         // Render each UI element
-        for element in self.elements.iter() {
+        for element in elements {
             builder
                 .bind_descriptor_sets(PipelineBindPoint::Graphics,
                     layout.clone(),
@@ -92,7 +122,7 @@ impl UserInterface {
                     element.texture_descriptor.clone())
                 .push_constants(layout.clone(),
                 0,
-                element.size_offset)
+                element.shader_constant)
                 .bind_vertex_buffers(0, self.rect_buffer.clone())
                 .draw(6, 1, 0, 0).unwrap();
         }
@@ -132,14 +162,16 @@ pub mod vs {
         #version 450
         layout(location = 0) in vec2 position;
         layout(location = 1) in vec2 uv;
-        layout(push_constant) uniform SizeOffset {
+        layout(push_constant) uniform ShaderConstant {
+            vec2 tex_start;
+            vec2 tex_finish;
             vec2 size;
             vec2 offset;
-        } ps;
+        } sc;
         layout(location = 0) out vec2 passUv;
         void main() {
-            gl_Position = vec4(position * ps.size + ps.offset, 0.0, 1.0);
-            passUv = uv;
+            gl_Position = vec4(position * sc.size + sc.offset, 0.0, 1.0);
+            passUv = vec2(uv.x * (sc.tex_finish.x - sc.tex_start.x) + sc.tex_start.x, uv.y * (sc.tex_finish.y - sc.tex_start.y) + sc.tex_start.y);
         }
         ",
         types_meta: {

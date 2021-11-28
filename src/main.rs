@@ -27,12 +27,16 @@ use vulkano::sync;
 use vulkano::sync::{GpuFuture, FlushError};
 use vulkano::format::{ClearValue, Format};
 
+use world::World;
 use pipeline::cs::ty::Vertex;
 use parameters::Params;
 use player::Player;
 use model::Model;
 use ui::UserInterface;
 use ghost::Ghost;
+use objects::Objects;
+
+use crate::player::GameState;
 
 mod world;
 mod pipeline;
@@ -45,13 +49,14 @@ mod model;
 mod texture;
 mod ui;
 mod ghost;
+mod objects;
 
-const NAME: &str = "maze or something i guess v0.1";
+const NAME: &str = "4D Pacman v0.2";
 
 fn main() {
     // Create vulkan instance
     let app_infos = ApplicationInfo {
-        application_name: Some(Cow::from("maze")),
+        application_name: Some(Cow::from(NAME)),
         application_version: Some(Version::V1_2),
         engine_name: None,
         engine_version: None };
@@ -88,7 +93,7 @@ fn main() {
     // Create window
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
-        .with_inner_size(LogicalSize { width: 800, height: 800 })
+        .with_inner_size(LogicalSize { width: 640, height: 640 })
         .with_position(PhysicalPosition { x : 300, y: 200 })
         .with_resizable(false)
         .with_title(NAME)
@@ -135,9 +140,10 @@ fn main() {
 
     // Initialize game elements
     let (ui, ui_future) = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone());
-    let (world, world_init_future) = world::World::new(&params, draw_queue.clone());
+    let (world, world_init_future) = World::new(&params, draw_queue.clone());
     let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone(), world.clone());
     let (mut ghost, ghost_init_future) = Ghost::new(&params, draw_queue.clone(), world.clone(), [1.0, 1.0, 1.0]);
+    let mut objects = Objects::new(draw_queue.clone(), &mut world.borrow_mut(), &params);
     init_futures.push(ui_future);
     init_futures.push(world_init_future);
     init_futures.push(player_init_future);
@@ -207,7 +213,7 @@ fn main() {
                 }, ..
             }, ..
         } => {
-            if player.complete {
+            if player.game_state != GameState::Playing {
                 return; // ignore user input
             }
             let world = world.borrow();
@@ -332,7 +338,8 @@ fn main() {
             }
 
             let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
-            let destination_values = vec![[0.4, 0.85, 0.4, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
+            let win_values = vec![[0.4, 0.85, 0.4, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
+            let lose_values = vec![[0.85, 0.4, 0.4, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
             let mut builder = AutoCommandBufferBuilder::primary(
                 device.clone(),
                 draw_queue.family(),
@@ -340,16 +347,17 @@ fn main() {
             ).unwrap();
 
             // Update game state
-            player.update();
-            ghost.update(&player);
+            player.update(&params, &mut objects);
+            ghost.update(&mut player);
+            objects.update();
 
-            if player.complete {
+            if player.game_state != GameState::Playing {
                 // Destination reached
                 builder
                     .begin_render_pass(
                         framebuffers[image_num].clone(),
                         SubpassContents::Inline,
-                        destination_values
+                        if player.game_state == GameState::Won { win_values } else { lose_values }
                     ).unwrap()
                     .set_viewport(0, [viewport.clone()])
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
@@ -367,6 +375,7 @@ fn main() {
                 world.borrow().render(&models, &player, &mut desc_set_pool, &mut builder, &pipeline);
                 player.render(&mut desc_set_pool, &mut builder, &pipeline);
                 ghost.render(&player, &mut desc_set_pool, &mut builder, &pipeline);
+                objects.render(&player, &world.borrow(), &models, &mut builder, &pipeline);
                 ui.render(&player, &mut builder);
                 
                 builder.end_render_pass().unwrap();

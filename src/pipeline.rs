@@ -56,7 +56,7 @@ pub mod fs {
         } ppd;
         layout(location = 0) out vec4 f_color;
         void main() {
-            vec3 directional_light = normalize(vec3(-2, -1, -1));
+            vec3 directional_light = normalize(vec3(-2, -1, 3));
             float ambient = 0.01;
             float directional = 0.39 * clamp(dot(normal, -directional_light), 0.0, 1.0);
             float distance2 = length(ppd.pos - position);

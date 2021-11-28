@@ -27,6 +27,14 @@ pub fn add(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     sum
 }
 
+pub fn sub(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let mut diff = a.clone();
+    for i in 0..4 {
+        diff[i] -= b[i];
+    }
+    diff
+}
+
 pub fn translate(translation: [f32; 3]) -> [[f32; 4]; 4] {
     transpose([
         [1.0, 0.0, 0.0, translation[0]],

@@ -1,6 +1,6 @@
 use rand::seq::SliceRandom;
 use rand::{Rng, thread_rng};
-use vulkano::pipeline::PipelineBindPoint;
+use rand::rngs::ThreadRng;
 use std::collections::hash_map::HashMap;
 use std::collections::hash_set::HashSet;
 use std::collections::vec_deque::VecDeque;
@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use vulkano::pipeline::PipelineBindPoint;
 use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::descriptor_set::SingleLayoutDescSetPool;
@@ -26,9 +27,10 @@ use crate::parameters::{Params, RAINBOW};
 
 pub type Coordinate = (usize, usize, usize, usize);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cell {
-    Empty
+    Empty,
+    Food
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,18 +170,19 @@ impl World {
 
         let fourth = player.cell()[3];
         let between = player.get_position()[3];
-        fn world_transform(world: &World, fourth: usize, between: f32) -> [[f32; 4]; 4] {
-            let spacing = (world.width + 1) as f32;
-            linalg::translate([(fourth as f32 - between) * spacing, 0.0, 0.0])
-        }
 
         for w in fourth - 1..fourth + 2 {
             if w >= 0 && w < self.fourth as i32 {
                 let w = w as usize;
-                let wvp = linalg::mul(view_projection, world_transform(self, w, between));
+                let wvp = linalg::mul(view_projection, self.world_transform(w, between));
                 self.render_fourth(w, wvp, player, models, builder, pipeline);
             }
         }
+    }
+
+    pub fn world_transform(&self, fourth: usize, between: f32) -> [[f32; 4]; 4] {
+        let spacing = (self.width + 1) as f32;
+        linalg::translate([(fourth as f32 - between) * spacing, 0.0, 0.0])
     }
 
     fn render_fourth(&self, fourth: usize, view_projection: [[f32; 4]; 4], player: &Box<Player>, models: &HashMap<String, Box<Model>>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
@@ -190,75 +193,30 @@ impl World {
         let floor_color = fourth_color.map(|f| f * 0.1);
         let ascend_color = [1.0, 1.0, 1.0];
         let (min_level, max_level) = ((player.cell()[2] - 6).clamp(0, self.depth as i32) as usize, player.cell()[2] as usize);
-        for level in min_level..max_level + 1 {
+        for level in min_level..=max_level {
             let level_buffers = &self.vertex_buffers[fourth][level];
-            builder
-                .push_constants(
-                    pipeline.graphics_pipeline.layout().clone(),
-                    0,
-                    ViewProjectionData { vp: view_projection, pushColor: fourth_color })
-                .bind_vertex_buffers(0, (models["wall"].vertices.clone(), level_buffers.walls.clone()))
-                .draw(
-                    models["wall"].vertices.len() as u32,
-                    level_buffers.walls.len() as u32,
-                    0,
-                    0)
-                .unwrap()
-                .push_constants(
-                    pipeline.graphics_pipeline.layout().clone(),
-                    0,
-                    ViewProjectionData { vp: view_projection, pushColor: floor_color })
-                .bind_vertex_buffers(0, (models["floor"].vertices.clone(), level_buffers.floors.clone()))
-                .draw(
-                    models["floor"].vertices.len() as u32,
-                    level_buffers.floors.len() as u32,
-                    0,
-                    0)
-                .unwrap()
-                .push_constants(
-                    pipeline.graphics_pipeline.layout().clone(),
-                    0,
-                    ViewProjectionData { vp: view_projection, pushColor: corner_color })
-                .bind_vertex_buffers(0, (models["corner"].vertices.clone(), level_buffers.corners.clone()))
-                .draw(
-                    models["corner"].vertices.len() as u32,
-                    level_buffers.corners.len() as u32,
-                    0,
-                    0)
-                .unwrap()
-                .push_constants(
-                    pipeline.graphics_pipeline.layout().clone(),
-                    0,
-                    ViewProjectionData { vp: view_projection, pushColor: ascend_color })
-                .bind_vertex_buffers(0, (models["ceiling"].vertices.clone(), level_buffers.ceilings.clone()))
-                .draw(
-                    models["ceiling"].vertices.len() as u32,
-                    level_buffers.ceilings.len() as u32,
-                    0,
-                    0)
-                .unwrap()
-                .push_constants(
-                    pipeline.graphics_pipeline.layout().clone(),
-                    0,
-                    ViewProjectionData { vp: view_projection, pushColor: left_color })
-                .bind_vertex_buffers(0, (models["ceiling"].vertices.clone(), level_buffers.left_portals.clone()))
-                .draw(
-                    models["ceiling"].vertices.len() as u32,
-                    level_buffers.left_portals.len() as u32,
-                    0,
-                    0)
-                .unwrap()
-                .push_constants(
-                    pipeline.graphics_pipeline.layout().clone(),
-                    0,
-                    ViewProjectionData { vp: view_projection, pushColor: right_color })
-                .bind_vertex_buffers(0, (models["ceiling"].vertices.clone(), level_buffers.right_portals.clone()))
-                .draw(
-                    models["ceiling"].vertices.len() as u32,
-                    level_buffers.right_portals.len() as u32,
-                    0,
-                    0)
-                .unwrap();
+            let draws = [
+                (fourth_color, &models["wall"], level_buffers.walls.clone()),
+                (floor_color, &models["floor"], level_buffers.floors.clone()),
+                (corner_color, &models["corner"], level_buffers.corners.clone()),
+                (ascend_color, &models["ceiling"], level_buffers.ceilings.clone()),
+                (left_color, &models["ceiling"], level_buffers.left_portals.clone()),
+                (right_color, &models["ceiling"], level_buffers.right_portals.clone()),
+            ];
+            for (color, model, instances) in draws {
+                builder
+                    .push_constants(
+                        pipeline.graphics_pipeline.layout().clone(),
+                        0,
+                        ViewProjectionData { vp: view_projection, pushColor: color })
+                    .bind_vertex_buffers(0, (model.vertices.clone(), instances.clone()))
+                    .draw(
+                        model.vertices.len() as u32,
+                        instances.len() as u32,
+                        0,
+                        0)
+                    .unwrap();
+            }
         }
     }
 
@@ -347,6 +305,22 @@ impl World {
         // Results in minimum spanning tree connecting all cells of maze
     }
 
+    pub fn random_empty_cell(&self) -> Coordinate {
+        fn gen(world: &World, rng: &mut ThreadRng) -> Coordinate {
+            (rng.gen_range(0..world.width), rng.gen_range(0..world.height), rng.gen_range(0..world.depth), rng.gen_range(0..world.fourth))
+        }
+        let mut rng = thread_rng();
+        let (mut x, mut y, mut z, mut w) = gen(self, &mut rng);
+        while self.cells[w][z][y][x] != Cell::Empty {
+            let (nx, ny, nz, nw) = gen(self, &mut rng);
+            x = nx;
+            y = ny;
+            z = nz;
+            w = nw;
+        }
+        (x, y, z, w)
+    }
+
     pub fn bfs(&self, start: Coordinate, finish: Coordinate) -> Vec<Coordinate> {
         // Use breadth-first search to find solution
         let mut queue: VecDeque<Coordinate> = VecDeque::new();
@@ -382,25 +356,10 @@ impl World {
         solution
     }
 
+    // Given fixed w and z coordinates, generate a list of instances of each type of object within the level
     fn vertex_buffer(&self, w: usize, z: usize) -> LevelInstances {
-        // Generate vertex data for maze
-        let mut walls: Vec<InstanceModel> = Vec::new();
-
-        // Mark cells with open ceilings
-        let ceilings: Vec<InstanceModel> = self.cells[w][z].iter().enumerate().map(|(y, row)| {
-            row.iter().enumerate().filter_map(move |(x, _cell)| {
-                match self.zwalls[w][z + 1][y][x] {
-                    Wall::SolidWall => None,
-                    Wall::NoWall => {
-                        let (x, y, z) = (x as f32, y as f32, z as f32 + 0.8);
-                        Some (InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) })
-                    }
-                }
-            })
-        }).flatten().collect();
-
         // Mark fourth-dimensional portals i guess
-        let left_portals: Vec<InstanceModel> = self.cells[w][z].iter().enumerate().map(|(y, row)| {
+        let left_portals: Vec<InstanceModel> = self.cells[w][z].iter().enumerate().flat_map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, _cell)| {
                 // Check "left" fourth dimension adjacent cell
                 match self.wwalls[w][z][y][x] {
@@ -411,11 +370,8 @@ impl World {
                     }
                 }
             })
-        })
-        .flatten()
-        .collect();
-
-        let right_portals: Vec<InstanceModel> = self.cells[w][z].iter().enumerate().map(|(y, row)| {
+        }).collect();
+        let right_portals: Vec<InstanceModel> = self.cells[w][z].iter().enumerate().flat_map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, _cell)| {
                 // Check "right" fourth dimension adjacent cell
                 match self.wwalls[w + 1][z][y][x] {
@@ -426,12 +382,10 @@ impl World {
                     }
                 }
             })
-        })
-        .flatten()
-        .collect();
+        }).collect();
 
-        // Map xwalls to rectangles
-        walls.append(&mut self.xwalls[w][z].iter().enumerate().map(|(y, row)| {
+        // Map horizontal walls
+        let top_to_down = self.xwalls[w][z].iter().enumerate().flat_map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, wall)| {
                 // Draw a wall between cells (x - 1, y, z) and (x, y, z)
                 let (x, y, z) = (x as f32 - 0.5, y as f32, z as f32);
@@ -442,12 +396,8 @@ impl World {
                     Wall::NoWall => None
                 }
             })
-        })
-        .flatten()
-        .collect::<Vec<_>>());
-
-        // Map ywalls to rectangles
-        walls.append(&mut self.ywalls[w][z].iter().enumerate().map(|(y, row)| {
+        });
+        let left_to_right = self.ywalls[w][z].iter().enumerate().flat_map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, wall)| {
                 // Draw a wall between cells (x, y - 1, z) and (x, y, z)
                 let (x, y, z) = (x as f32, y as f32 - 0.5, z as f32);
@@ -458,10 +408,11 @@ impl World {
                     Wall::NoWall => None
                 }
             })
-        }).flatten().collect::<Vec<_>>());
+        });
+        let walls: Vec<InstanceModel> = top_to_down.chain(left_to_right).collect();
 
-        // Map zwalls to rectangles
-        let floors: Vec<InstanceModel> = self.zwalls[w][z].iter().enumerate().map(|(y, row)| {
+        // Map floors to rectangles
+        let floors: Vec<InstanceModel> = self.zwalls[w][z].iter().enumerate().flat_map(|(y, row)| {
             row.iter().enumerate().filter_map(move |(x, wall)| {
                 // Draw a floor between cells (x, y, z - 1) and (x, y, z)
                 let (x, y, z) = (x as f32, y as f32, z as f32 - 0.05);
@@ -472,15 +423,34 @@ impl World {
                     Wall::NoWall => None
                 }
             })
-        }).flatten().collect();
+        }).collect();
+
+        // Mark cells with open ceilings
+        let ceilings: Vec<InstanceModel> = self.cells[w][z].iter().enumerate().flat_map(|(y, row)| {
+            row.iter().enumerate().filter_map(move |(x, _cell)| {
+                match self.zwalls[w][z + 1][y][x] {
+                    Wall::SolidWall => None,
+                    Wall::NoWall => {
+                        let (x, y, z) = (x as f32, y as f32, z as f32 + 0.8);
+                        Some (InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) })
+                    }
+                }
+            })
+        }).collect();
 
         // Generate wall corners
         let mut corners: Vec<InstanceModel> = Vec::new();
         for x in 0..self.width + 1 {
             for y in 0..self.height + 1 {
-                // Draw a wall corner between cells (x - 1, y - 1, z) and (x, y, z)
-                let (x, y, z) = (x as f32 - 0.5, y as f32 - 0.5, z as f32);
-                corners.push(InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) });
+                // Only add corner if at least 1 horizontal wall is touching
+                if (y < self.height && self.xwalls[w][z][y][x] != Wall::NoWall)
+                || (x < self.width && self.ywalls[w][z][y][x] != Wall::NoWall)
+                || self.xwalls[w][z][y - 1][x] != Wall::NoWall
+                || self.ywalls[w][z][y][x - 1] != Wall::NoWall {
+                    // Draw a wall corner between cells (x - 1, y - 1, z) and (x, y, z)
+                    let (x, y, z) = (x as f32 - 0.5, y as f32 - 0.5, z as f32);
+                    corners.push(InstanceModel { m: linalg::model([90f32.to_radians(), 0.0, 0.0], [1.0, 1.0, 1.0], [x, y, z]) });
+                }
             }
         }
 

@@ -16,7 +16,7 @@ pub struct Model {
 impl Model {
     pub fn new(queue: Arc<Queue>, filename: &str) -> (Box<Model>, Box<dyn GpuFuture>) {
         let mut vertices = Vec::new();
-        let file = fs::File::open(filename).expect(&format!("Failed to load model `{}'", filename));
+        let file = fs::File::open("res/".to_owned() + filename).expect(&format!("Failed to load model `{}'", filename));
         let reader = BufReader::new(file);
         let mut v: Vec<[f32; 3]> = Vec::new();
         let mut vn: Vec<[f32; 3]> = Vec::new();
