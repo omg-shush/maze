@@ -29,7 +29,6 @@ pub struct Player {
     reach_dest: Instant,
     world: Rc<RefCell<World>>,
     pub complete: bool,
-    pub solve: Option<(usize, Instant)>,
     pub camera: Camera,
     vertex_buffer: Arc<ImmutableBuffer<[Vertex]>>,
     instance_buffer_pool: CpuBufferPool<[InstanceModel; 1]>,
@@ -50,7 +49,6 @@ impl Player {
             reach_dest: Instant::now(),
             world: world,
             complete: false,
-            solve: None,
             camera: Camera::new(),
             vertex_buffer,
             instance_buffer_pool: CpuBufferPool::new(device.clone(), BufferUsage::vertex_buffer()),
@@ -68,7 +66,7 @@ impl Player {
         ]).unwrap();
         let player_position_buffer = self.player_position_buffer_pool.next(
             PlayerPositionData { pos: linalg::add(self.position[0..3].try_into().unwrap(), [0.0, 0.0, 0.8]) }).unwrap();
-        let descripter_set = {
+        let descriptor_set = {
             let mut builder = desc_set_pool.next();
             builder.add_buffer(Arc::new(player_position_buffer)).unwrap();
             builder.build().unwrap()
@@ -80,7 +78,7 @@ impl Player {
                 PipelineBindPoint::Graphics,
                 pipeline.graphics_pipeline.layout().clone(),
                 0,
-                descripter_set)
+                descriptor_set)
             .push_constants(pipeline.graphics_pipeline.layout().clone(), 0, ViewProjectionData {
                 vp: view_projection,
                 pushColor: RAINBOW[self.cell()[3] as usize % RAINBOW.len()]})
@@ -123,22 +121,6 @@ impl Player {
             let delta = [0, 1, 2, 3].map(|i| (self.dest_position[i] as f32 - self.position[i]) * self.dest_speed * (now - self.last_update).as_secs_f32());
             for i in 0..delta.len() {
                 self.position[i] += delta[i];
-            }
-        }
-
-        // Auto-solve
-        const MOVE_TIME: f32 = 0.5;
-        if let Some((i, time)) = self.solve {
-            if now > time {
-                let n = self.world.borrow_mut().solution[i];
-                let p = self.cell();
-                self.move_position([n[0] - p[0], n[1] - p[1], n[2] - p[2], n[3] - p[3]], MOVE_TIME);
-                if i + 1 < self.world.borrow_mut().solution.len() {
-                    let next_move = now + Duration::from_secs_f32(MOVE_TIME);
-                    self.solve = Some((i + 1, next_move));
-                } else {
-                    self.solve = None;
-                }
             }
         }
 

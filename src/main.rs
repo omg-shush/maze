@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::vec;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use vulkano::descriptor_set::{SingleLayoutDescSetPool};
 use vulkano_win::VkSurfaceBuild;
@@ -32,6 +32,7 @@ use parameters::Params;
 use player::Player;
 use model::Model;
 use ui::UserInterface;
+use ghost::Ghost;
 
 mod world;
 mod pipeline;
@@ -43,6 +44,7 @@ mod linalg;
 mod model;
 mod texture;
 mod ui;
+mod ghost;
 
 const NAME: &str = "maze or something i guess v0.1";
 
@@ -135,9 +137,11 @@ fn main() {
     let (ui, ui_future) = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone());
     let (world, world_init_future) = world::World::new(&params, draw_queue.clone());
     let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone(), world.clone());
+    let (mut ghost, ghost_init_future) = Ghost::new(&params, draw_queue.clone(), world.clone(), [1.0, 1.0, 1.0]);
     init_futures.push(ui_future);
     init_futures.push(world_init_future);
     init_futures.push(player_init_future);
+    init_futures.push(ghost_init_future);
 
     let init_future = init_futures.into_iter().fold(sync::now(device.clone()).boxed(), |acc, future| {
         acc.join(future).boxed()
@@ -148,62 +152,9 @@ fn main() {
     println!("WASD or Arrow Keys to move horizontally");
     println!("SPACE to move up, LeftControl to move down");
     println!("Q and E to move through left and right portals");
-    println!("ENTER to play solution");
     println!("green screen = win");
     println!("Specify custom dimensions as command line arguments, eg:");
     println!("    maze.exe 10 10 10 10");
-
-    // Use compute shader to elaborate vertex data
-    // let vertex_buffer: Vec<Arc<DeviceLocalBuffer<[Vertex]>>> = world_buffer.iter().map(|level_buffer| {
-    //     DeviceLocalBuffer::array(
-    //         device.clone(),
-    //         36 * level_buffer.len() as u64, // 6 vertices per rectangle, 6 rectangles per box
-    //         BufferUsage {
-    //             storage_buffer: true,
-    //             vertex_buffer: true,
-    //             .. BufferUsage::none()
-    //         },
-    //         [draw_queue.family()]
-    //     ).unwrap()
-    // }).collect();
-
-    // let mut builder = AutoCommandBufferBuilder::primary(
-    //     device.clone(),
-    //     draw_queue.family(),
-    //     CommandBufferUsage::OneTimeSubmit
-    // ).unwrap();
-    // builder.bind_pipeline_compute(pipeline.compute_pipeline.clone());
-    // let mut compute_desc_set_pool = SingleLayoutDescSetPool::new(
-    //     pipeline.compute_pipeline.layout().descriptor_set_layouts()[0].clone()
-    // );
-    // for level in 0..world::DEPTH {
-    //     let input_len = world_buffer[level].len() as u32;
-    //     let compute_descriptor_set = {
-    //         let mut builder = compute_desc_set_pool.next();
-    //         builder.add_buffer(world_buffer[level].clone()).unwrap();
-    //         builder.add_buffer(vertex_buffer[level].clone()).unwrap();
-    //         builder.build().unwrap()
-    //     };
-    //     builder
-    //         .bind_descriptor_sets(
-    //             PipelineBindPoint::Compute,
-    //             pipeline.compute_pipeline.layout().clone(),
-    //             0,
-    //             compute_descriptor_set
-    //         )
-    //         .push_constants(
-    //             pipeline.compute_pipeline.layout().clone(),
-    //             0,
-    //             pipeline::cs::ty::SourceLength { len: input_len }
-    //         )
-    //         .dispatch([input_len / 256 + 1, 1, 1])
-    //         .unwrap();
-    // }
-    // let compute_command_buffer = builder.build().unwrap();
-    // sync::now(device.clone())
-    //     .then_execute(draw_queue.clone(), compute_command_buffer).unwrap()
-    //     .then_signal_fence_and_flush().unwrap()
-    //     .wait(None).unwrap();
 
     // Initialize framebuffers
     let dimensions = images[0].dimensions();
@@ -228,6 +179,7 @@ fn main() {
         }).collect::<Vec<_>>();
 
     let mut previous_frame_end = Some (init_future.boxed());
+    let mut previous_frame = Instant::now();
     let mut recreate_swapchain = false;
     let mut desc_set_pool = SingleLayoutDescSetPool::new(
         pipeline.graphics_pipeline.layout().descriptor_set_layouts()[0].clone()
@@ -255,8 +207,8 @@ fn main() {
                 }, ..
             }, ..
         } => {
-            if player.complete || player.solve.is_some() {
-                return;
+            if player.complete {
+                return; // ignore user input
             }
             let world = world.borrow();
             let seconds = 0.5;
@@ -323,20 +275,16 @@ fn main() {
                         }
                     }
                 }
-                VirtualKeyCode::Return => {
-                    if state == ElementState::Pressed && player.solve.is_none() {
-                        let (sx, sy, sz, sw) = world.start;
-                        let (px, py, pz, pw) = (player.cell()[0], player.cell()[1], player.cell()[2], player.cell()[3]);
-                        let delta = [sx as i32 - px, sy as i32 - py, sz as i32 - pz, sw as i32 - pw];
-                        player.move_position(delta, 0.0);
-                        player.solve = Some((0, Instant::now() + Duration::from_secs(1)));
-                        player.update();
-                    }
-                }
                 _ => {}
             }
         }
         Event::RedrawEventsCleared => {
+            let now = Instant::now();
+            if (now - previous_frame).as_secs_f32() < 1.0 / params.fps {
+                return; // Don't render another frame yet
+            }
+            previous_frame = now;
+
             previous_frame_end.as_mut().unwrap().cleanup_finished();
 
             if recreate_swapchain {
@@ -393,6 +341,7 @@ fn main() {
 
             // Update game state
             player.update();
+            ghost.update(&player);
 
             if player.complete {
                 // Destination reached
@@ -417,6 +366,7 @@ fn main() {
 
                 world.borrow().render(&models, &player, &mut desc_set_pool, &mut builder, &pipeline);
                 player.render(&mut desc_set_pool, &mut builder, &pipeline);
+                ghost.render(&player, &mut desc_set_pool, &mut builder, &pipeline);
                 ui.render(&player, &mut builder);
                 
                 builder.end_render_pass().unwrap();

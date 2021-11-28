@@ -26,7 +26,9 @@ impl<T: Eq + Hash + Copy + Debug> DisjointSet<T> {
     pub fn union(&mut self, a: &T, b: &T) {
         let a_top = self.find(&a);
         let b_top = self.find(&b);
-        self.table.insert(a_top.clone(), DSPtr::Ptr(b_top.clone()));
+        if a_top != b_top { // If they're already in same set, no changes necessary
+            self.table.insert(a_top.clone(), DSPtr::Ptr(b_top.clone()));
+        }
     }
 
     // Find

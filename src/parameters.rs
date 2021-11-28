@@ -17,7 +17,9 @@ pub const RAINBOW: [[f32; 3]; 6] = [
 pub struct Params {
     pub samples: u32,
     pub sample_count: SampleCount,
-    pub dimensions: [usize; 4]
+    pub dimensions: [usize; 4],
+    pub ghost_move_time: f32,
+    pub fps: f32
 }
 
 impl Params {
@@ -26,7 +28,7 @@ impl Params {
         // First arg is path to executable
         let dimensions: [usize; 4] =
             if dimensions.len() != 5 {
-                [4, 4, 4, 4]
+                [10, 10, 1, 1]
             } else {
                 [&dimensions[1], &dimensions[2], &dimensions[3], &dimensions[4]].map(|s| s.parse::<usize>().unwrap())
             };
@@ -46,7 +48,9 @@ impl Params {
         Params {
             samples,
             sample_count,
-            dimensions
+            dimensions,
+            ghost_move_time: 1.0,
+            fps: 60.0
         }
     }
 }

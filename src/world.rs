@@ -1,5 +1,5 @@
 use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::{Rng, thread_rng};
 use vulkano::pipeline::PipelineBindPoint;
 use std::collections::hash_map::HashMap;
 use std::collections::hash_set::HashSet;
@@ -24,7 +24,7 @@ use crate::model::Model;
 use crate::pipeline::vs::ty::ViewProjectionData;
 use crate::parameters::{Params, RAINBOW};
 
-type Coordinate = (usize, usize, usize, usize);
+pub type Coordinate = (usize, usize, usize, usize);
 
 #[derive(Debug, Clone, Copy)]
 pub enum Cell {
@@ -91,12 +91,9 @@ pub struct World {
     // I don't even know any more, (fourth + 1) x depth x height x width
     pub wwalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
 
-    pub start: Coordinate,
-    pub finish: Coordinate,
-    pub solution: Vec<([i32; 4])>,
-
     player_position_buffer_pool: CpuBufferPool<[PlayerPositionData; 1]>,
-    vertex_buffers: Vec<Vec<LevelBuffers>> // lists of model matrices, indexed by: fourth -> level
+    vertex_buffers: Vec<Vec<LevelBuffers>>, // lists of model matrices, indexed by: fourth -> level
+    neighbors: HashMap<Coordinate, Vec<Coordinate>>
 }
 
 impl World {
@@ -109,11 +106,9 @@ impl World {
             ywalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height + 1].into_boxed_slice(); depth].into_boxed_slice(); fourth].into_boxed_slice(),
             zwalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height].into_boxed_slice(); depth + 1].into_boxed_slice(); fourth].into_boxed_slice(),
             wwalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height].into_boxed_slice(); depth].into_boxed_slice(); fourth + 1].into_boxed_slice(),
-            start: (0, 0, 0, 0),
-            finish: (width - 1, height - 1, depth - 1, fourth - 1),
-            solution: Vec::new(),
             player_position_buffer_pool: CpuBufferPool::new(queue.device().clone(), BufferUsage::uniform_buffer()),
             vertex_buffers: Vec::new(),
+            neighbors: HashMap::new(),
             width,
             height,
             depth,
@@ -267,8 +262,9 @@ impl World {
         }
     }
 
-    pub fn generate_maze(&mut self) {
+    fn generate_maze(&mut self) {
         // Use randomized kruskal's algorithm
+        let mut rng = thread_rng();
 
         // Random list of edges
         #[derive(Debug)]
@@ -299,7 +295,7 @@ impl World {
                 }
             }
         }
-        edges.shuffle(&mut thread_rng());
+        edges.shuffle(&mut rng);
 
         // Initialize disjoint set of cells
         let mut cells = disjoint_set::DisjointSet::new();
@@ -317,7 +313,6 @@ impl World {
         // Take a random edge and check if the neighbor cells are connected
         // If not, remove the edge to merge them
         // Also generate map from each cell to accessible neighbors
-        let mut neighbors: HashMap<Coordinate, Vec<Coordinate>> = HashMap::new();
         for edge in edges.iter() {
             let (cell_a, cell_b) =
                 match edge {
@@ -328,7 +323,7 @@ impl World {
                 };
             let set_a = cells.find(&cell_a);
             let set_b = cells.find(&cell_b);
-            if set_a != set_b {
+            if set_a != set_b || rng.gen_bool(0.3) {
                 // Remove edge between these cells in world
                 match edge {
                     MazeEdge::XWall ((x, y, z, w)) => self.xwalls[*w][*z][*y][*x] = Wall::NoWall,
@@ -337,54 +332,54 @@ impl World {
                     MazeEdge::WWall ((x, y, z, w)) => self.wwalls[*w][*z][*y][*x] = Wall::NoWall
                 }
                 // Mark them as neighbors for BFS later
-                if !neighbors.contains_key(&cell_a) {
-                    neighbors.insert(cell_a, Vec::new());
+                if !self.neighbors.contains_key(&cell_a) {
+                    self.neighbors.insert(cell_a, Vec::new());
                 }
-                if !neighbors.contains_key(&cell_b) {
-                    neighbors.insert(cell_b, Vec::new());
+                if !self.neighbors.contains_key(&cell_b) {
+                    self.neighbors.insert(cell_b, Vec::new());
                 }
-                neighbors.get_mut(&cell_a).unwrap().push(cell_b);
-                neighbors.get_mut(&cell_b).unwrap().push(cell_a);
+                self.neighbors.get_mut(&cell_a).unwrap().push(cell_b);
+                self.neighbors.get_mut(&cell_b).unwrap().push(cell_a);
                 // And merge the sets they belong to
                 cells.union(&set_a, &set_b);
             }
         }
         // Results in minimum spanning tree connecting all cells of maze
+    }
 
-        // Generate exit at bottom right corner of top layer in last w
-        self.xwalls[self.fourth - 1][self.depth - 1][self.height - 1][self.width] = Wall::NoWall;
-
+    pub fn bfs(&self, start: Coordinate, finish: Coordinate) -> Vec<Coordinate> {
         // Use breadth-first search to find solution
         let mut queue: VecDeque<Coordinate> = VecDeque::new();
-        queue.push_back((0, 0, 0, 0));
+        queue.push_back(start);
         let mut visited: HashSet<Coordinate> = HashSet::new();
-        visited.insert((0, 0, 0, 0));
+        visited.insert(start);
         let mut backtrack: HashMap<Coordinate, Coordinate> = HashMap::new();
         while !queue.is_empty() {
             // Take next cell from queue
             let cell = queue.pop_front().unwrap();
 
             // Add unvisited neighbors to the queue
-            for n in neighbors.get(&cell).unwrap_or(&Vec::new()) {
+            for n in self.neighbors.get(&cell).unwrap_or(&Vec::new()) {
                 if !visited.contains(n) {
                     visited.insert(*n);
                     queue.push_back(*n);
                     backtrack.insert(*n, cell);
+                    if *n == finish {
+                        break;
+                    }
                 }
             }
         }
         // Use backtracking information to recover path
-        let mut previous = self.finish;
-        self.solution.push({
-            let (x, y, z, w) = self.finish;
-            [x, y, z, w].map(|u| u as i32)
-        });
-        while previous != self.start {
+        let mut solution: Vec<Coordinate> = Vec::new();
+        let mut previous = finish;
+        solution.push(finish);
+        while previous != start {
             previous = *backtrack.get(&previous).expect("Backtracking after BFS failed, impossible");
-            let (x, y, z, w) = previous;
-            self.solution.push([x, y, z, w].map(|u| u as i32));
+            solution.push(previous);
         }
-        self.solution.reverse(); // Get finish at the end of the vec
+        solution.reverse(); // Get finish at the end of the vec
+        solution
     }
 
     fn vertex_buffer(&self, w: usize, z: usize) -> LevelInstances {
