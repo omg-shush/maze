@@ -1,6 +1,4 @@
 use std::time::{Duration, Instant};
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::sync::Arc;
 
 use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
@@ -33,7 +31,6 @@ pub struct Player {
     dest_speed: f32,
     last_update: Instant,
     reach_dest: Instant,
-    world: Rc<RefCell<World>>,
     pub game_state: GameState,
     pub camera: Camera,
     vertex_buffer: Arc<ImmutableBuffer<[Vertex]>>,
@@ -43,29 +40,29 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(device: Arc<Device>, queue: Arc<Queue>, world: Rc<RefCell<World>>) -> (Box<Player>, Box<dyn GpuFuture>) {
+    pub fn new(device: Arc<Device>, queue: Arc<Queue>) -> (Player, Box<dyn GpuFuture>) {
         let (vertex_buffer, future) = ImmutableBuffer::from_iter(
             player_buffer().into_iter(),
             BufferUsage::vertex_buffer(),
             queue).unwrap();
-        let mut p = Player {
+        let mut player_camera = Camera::new();
+        player_camera.turn([30.0, 0.0, 0.0].map(|f: f32| f.to_radians()));
+        player_camera.position(CAMERA_OFFSET);
+        let p = Player {
             dest_position: [0, 0, 0, 0],
             position: [0.0, 0.0, 0.0, 0.0],
             dest_speed: 0.0,
             last_update: Instant::now(),
             reach_dest: Instant::now(),
-            world: world,
             game_state: GameState::Playing,
             score: 0,
-            camera: Camera::new(),
+            camera: player_camera,
             vertex_buffer,
             instance_buffer_pool: CpuBufferPool::new(device.clone(), BufferUsage::vertex_buffer()),
             player_position_buffer_pool: CpuBufferPool::new(device.clone(), BufferUsage::uniform_buffer())
         };
-        p.camera.turn([30.0, 0.0, 0.0].map(|f: f32| f.to_radians()));
-        p.camera.position(CAMERA_OFFSET);
         println!("Initialized player");
-        (Box::new(p), future.boxed())
+        (p, future.boxed())
     }
 
     pub fn render(&self, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
@@ -119,7 +116,7 @@ impl Player {
         self.dest_position
     }
 
-    pub fn update(&mut self, params: &Params, objects: &mut Objects) {
+    pub fn update(&mut self, params: &Params, world: &mut World, objects: &mut Objects) {
         let now = Instant::now();
 
         // Interpolate position
@@ -136,7 +133,6 @@ impl Player {
         self.camera.position(linalg::add(self.position[0..3].try_into().unwrap(), CAMERA_OFFSET));
 
         // Check if something's in player's cell
-        let mut world = self.world.borrow_mut();
         let x = self.cell()[0] as usize;
         let y = self.cell()[1] as usize;
         let z = self.cell()[2] as usize;

@@ -151,10 +151,10 @@ fn main() {
     }).into_iter().collect();
 
     // Initialize game elements
-    let (world, world_init_future) = World::new(&params, draw_queue.clone());
-    let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone(), world.clone());
-    let (mut ghost, ghost_init_future) = Ghost::new(&params, draw_queue.clone(), world.clone(), [1.0, 1.0, 1.0]);
-    let mut objects = Objects::new(draw_queue.clone(), &mut world.borrow_mut(), &params);
+    let (mut world, world_init_future) = World::new(&params, draw_queue.clone());
+    let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone());
+    let (mut ghost, ghost_init_future) = Ghost::new(&params, draw_queue.clone(), [1.0, 1.0, 1.0]);
+    let mut objects = Objects::new(draw_queue.clone(), &mut world, &params);
     let ui = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone(), &textures);
     init_futures.push(world_init_future);
     init_futures.push(player_init_future);
@@ -227,7 +227,6 @@ fn main() {
             if player.game_state != GameState::Playing {
                 return; // ignore user input
             }
-            let world = world.borrow();
             let seconds = 0.5;
             match keycode {
                 VirtualKeyCode::W | VirtualKeyCode::Up => {
@@ -361,8 +360,8 @@ fn main() {
 
             // Update game state
             if player.game_state == GameState::Playing {
-                player.update(&params, &mut objects);
-                ghost.update(&mut player);
+                player.update(&params, &mut world, &mut objects);
+                ghost.update(&mut player, &world);
                 objects.update(&player);
             }
 
@@ -377,7 +376,7 @@ fn main() {
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone());
                 
                 // Game over; only render UI
-                ui.render(&player, &world.borrow(), &params, &mut builder);
+                ui.render(&player, &world, &params, &mut builder);
 
                 builder.end_render_pass().unwrap();
             } else {
@@ -390,11 +389,11 @@ fn main() {
                     .set_viewport(0, [viewport.clone()])
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone());
 
-                world.borrow().render(&models, &player, &mut desc_set_pool, &mut builder, &pipeline);
+                world.render(&models, &player, &mut desc_set_pool, &mut builder, &pipeline);
                 player.render(&mut desc_set_pool, &mut builder, &pipeline);
-                ghost.render(&player, &mut desc_set_pool, &mut builder, &pipeline);
-                objects.render(&player, &world.borrow(), &models, &mut builder, &pipeline);
-                ui.render(&player, &world.borrow(), &params, &mut builder);
+                ghost.render(&player, &world, &mut desc_set_pool, &mut builder, &pipeline);
+                objects.render(&player, &world, &models, &mut builder, &pipeline);
+                ui.render(&player, &world, &params, &mut builder);
                 
                 builder.end_render_pass().unwrap();
             }

@@ -1,6 +1,4 @@
 use rand::{Rng, thread_rng};
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::time::{Duration, Instant};
 use std::sync::Arc;
 
@@ -31,14 +29,13 @@ pub struct Ghost {
     move_time: f32,
     current_move_time: f32, // Incorporates speed penalties for 3rd or 4th dimensional movement
     instant_start: Instant,
-    world: Rc<RefCell<World>>,
     vertex_buffer: Arc<ImmutableBuffer<[Vertex]>>,
     instance_buffer_pool: CpuBufferPool<[InstanceModel; 1]>,
     player_position_buffer_pool: CpuBufferPool<PlayerPositionData>
 }
 
 impl Ghost {
-    pub fn new(params: &Params, queue: Arc<Queue>, world: Rc<RefCell<World>>, color: [f32; 3]) -> (Ghost, Box<dyn GpuFuture>) {
+    pub fn new(params: &Params, queue: Arc<Queue>, color: [f32; 3]) -> (Ghost, Box<dyn GpuFuture>) {
         let mut rng = thread_rng();
         let dest_position = params.dimensions.map(|d| rng.gen_range(d/2..d));
         let position = dest_position.map(|i| i as f32);
@@ -58,14 +55,13 @@ impl Ghost {
             move_time: params.ghost_move_time,
             current_move_time: params.ghost_move_time,
             instant_start: Instant::now(),
-            world,
             vertex_buffer,
             instance_buffer_pool: CpuBufferPool::new(queue.device().clone(), BufferUsage::vertex_buffer()),
             player_position_buffer_pool: CpuBufferPool::new(queue.device().clone(), BufferUsage::uniform_buffer())
         }, future.boxed())
     }
 
-    pub fn update(&mut self, player: &mut Player) {
+    pub fn update(&mut self, player: &mut Player, world: &World) {
         if self.grace {
             if player.score > 0 {
                 self.grace = false;
@@ -90,7 +86,7 @@ impl Ghost {
             let ghost_pos = (self.dest_position[0] as usize, self.dest_position[1] as usize, self.dest_position[2] as usize, self.dest_position[3] as usize);
             let player_pos = (player.cell()[0] as usize, player.cell()[1] as usize, player.cell()[2] as usize, player.cell()[3] as usize);
             // Next target position
-            let (x, y, z, w) = self.world.borrow().bfs(ghost_pos, player_pos)[1];
+            let (x, y, z, w) = world.bfs(ghost_pos, player_pos)[1];
             self.dest_position = [x, y, z, w];
             self.current_move_time = self.move_time *
                 if self.dest_position[2] != self.init_position[2] {
@@ -108,8 +104,8 @@ impl Ghost {
         }
     }
 
-    pub fn render(&self, player: &Box<Player>, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
-        let x = self.position[0] + (self.position[3] - player.get_position()[3]) * ((self.world.borrow_mut().width + 1) as f32);
+    pub fn render(&self, player: &Player, world: &World, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
+        let x = self.position[0] + (self.position[3] - player.get_position()[3]) * ((world.width + 1) as f32);
         let z = self.position[2] + ((Instant::now() - self.instant_start).as_secs_f32() * 3.0).sin() / 4.0;
         let instance_buffer = self.instance_buffer_pool.next([InstanceModel {
             m: linalg::translate([x, self.position[1], z])

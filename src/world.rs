@@ -4,8 +4,6 @@ use rand::rngs::ThreadRng;
 use std::collections::hash_map::HashMap;
 use std::collections::hash_set::HashSet;
 use std::collections::vec_deque::VecDeque;
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::sync::Arc;
 
 use vulkano::pipeline::PipelineBindPoint;
@@ -99,7 +97,7 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(params: &Params, queue: Arc<Queue>) -> (Rc<RefCell<World>>, Box<dyn GpuFuture>) {
+    pub fn new(params: &Params, queue: Arc<Queue>) -> (World, Box<dyn GpuFuture>) {
         // Start by creating a 2D grid, with walls around each cell
         let [width, height, depth, fourth] = params.dimensions;
         let mut world = World {
@@ -147,10 +145,10 @@ impl World {
             future.then_signal_fence_and_flush().unwrap().boxed()
         });
         println!("Initialized world");
-        (Rc::new(RefCell::new(world)), future)
+        (world, future)
     }
 
-    pub fn render(&self, models: &HashMap<String, Box<Model>>, player: &Box<Player>, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
+    pub fn render(&self, models: &HashMap<String, Box<Model>>, player: &Player, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
         let player_position_buffer = self.player_position_buffer_pool.next([
             PlayerPositionData { pos: linalg::add(player.get_position()[0..3].try_into().unwrap(), [0.0, 0.0, 0.4]) }
         ]).unwrap();
@@ -185,7 +183,7 @@ impl World {
         linalg::translate([(fourth as f32 - between) * spacing, 0.0, 0.0])
     }
 
-    fn render_fourth(&self, fourth: usize, view_projection: [[f32; 4]; 4], player: &Box<Player>, models: &HashMap<String, Box<Model>>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
+    fn render_fourth(&self, fourth: usize, view_projection: [[f32; 4]; 4], player: &Player, models: &HashMap<String, Box<Model>>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
         let fourth_color = RAINBOW[fourth % RAINBOW.len()];
         let left_color = RAINBOW[(fourth as i32 - 1).rem_euclid(RAINBOW.len() as i32) as usize];
         let right_color = RAINBOW[(fourth + 1) % RAINBOW.len()];
