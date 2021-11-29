@@ -255,6 +255,7 @@ fn main() {
                     if state == ElementState::Pressed && keys[4] == ElementState::Released {
                         if world.check_move(player.cell(), [0, 0, 1, 0]) {
                             player.move_position([0, 0, 1, 0], seconds);
+                            objects.dirty_buffer = true;
                         }
                     }
                     keys[4] = state
@@ -263,6 +264,7 @@ fn main() {
                     if state == ElementState::Pressed && keys[5] == ElementState::Released {
                         if world.check_move(player.cell(), [0, 0, -1, 0]) {
                             player.move_position([0, 0, -1, 0], seconds);
+                            objects.dirty_buffer = true;
                         }
                     }
                     keys[5] = state
@@ -271,6 +273,7 @@ fn main() {
                     if state == ElementState::Pressed && keys[6] == ElementState::Released {
                         if world.check_move(player.cell(), [0, 0, 0, -1]) {
                             player.move_position([0, 0, 0, -1], seconds);
+                            objects.dirty_buffer = true;
                         }
                     }
                 },
@@ -278,6 +281,7 @@ fn main() {
                     if state == ElementState::Pressed && keys[7] == ElementState::Released {
                         if world.check_move(player.cell(), [0, 0, 0, 1]) {
                             player.move_position([0, 0, 0, 1], seconds);
+                            objects.dirty_buffer = true;
                         }
                     }
                 }
@@ -338,8 +342,6 @@ fn main() {
             }
 
             let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
-            let win_values = vec![[0.4, 0.85, 0.4, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
-            let lose_values = vec![[0.85, 0.4, 0.4, 1.0].into(), ClearValue::None, ClearValue::Depth(1.0)];
             let mut builder = AutoCommandBufferBuilder::primary(
                 device.clone(),
                 draw_queue.family(),
@@ -347,21 +349,26 @@ fn main() {
             ).unwrap();
 
             // Update game state
-            player.update(&params, &mut objects);
-            ghost.update(&mut player);
-            objects.update();
+            if player.game_state == GameState::Playing {
+                player.update(&params, &mut objects);
+                ghost.update(&mut player);
+                objects.update(&player);
+            }
 
             if player.game_state != GameState::Playing {
-                // Destination reached
                 builder
                     .begin_render_pass(
                         framebuffers[image_num].clone(),
                         SubpassContents::Inline,
-                        if player.game_state == GameState::Won { win_values } else { lose_values }
+                        clear_values
                     ).unwrap()
                     .set_viewport(0, [viewport.clone()])
-                    .bind_pipeline_graphics(pipeline.graphics_pipeline.clone())
-                    .end_render_pass().unwrap();
+                    .bind_pipeline_graphics(pipeline.graphics_pipeline.clone());
+                
+                // Game over; only render UI
+                ui.render(&player, &params, &mut builder);
+
+                builder.end_render_pass().unwrap();
             } else {
                 builder
                     .begin_render_pass(
@@ -376,7 +383,7 @@ fn main() {
                 player.render(&mut desc_set_pool, &mut builder, &pipeline);
                 ghost.render(&player, &mut desc_set_pool, &mut builder, &pipeline);
                 objects.render(&player, &world.borrow(), &models, &mut builder, &pipeline);
-                ui.render(&player, &mut builder);
+                ui.render(&player, &params, &mut builder);
                 
                 builder.end_render_pass().unwrap();
             }

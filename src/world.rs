@@ -281,7 +281,11 @@ impl World {
                 };
             let set_a = cells.find(&cell_a);
             let set_b = cells.find(&cell_b);
-            if set_a != set_b || rng.gen_bool(0.3) {
+            let within_level = match edge {
+                MazeEdge::XWall (_) | MazeEdge::YWall (_) => true,
+                _ => false
+            };
+            if set_a != set_b || (within_level && rng.gen_bool(0.3)) {
                 // Remove edge between these cells in world
                 match edge {
                     MazeEdge::XWall ((x, y, z, w)) => self.xwalls[*w][*z][*y][*x] = Wall::NoWall,

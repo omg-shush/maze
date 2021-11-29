@@ -4,6 +4,7 @@ use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint};
 use vulkano::render_pass::{RenderPass, Subpass};
 use vulkano::sampler::Sampler;
@@ -11,18 +12,22 @@ use vulkano::sync::{self, GpuFuture};
 use vulkano::device::{Queue, Device};
 use vulkano::impl_vertex;
 
-use crate::player::Player;
+use crate::parameters::Params;
+use crate::player::{GameState, Player};
 use crate::texture::Texture;
 
 const DIGIT_WIDTH: f32 = 1.0 / 10.0;
-const DIGIT_HEIGHT: f32 = 80.0 / 512.0;
+const DIGIT_HEIGHT: f32 = 100.0 / 512.0;
 
 pub struct UserInterface {
     textures: HashMap<String, Texture>,
     graphics_pipeline: Arc<GraphicsPipeline>,
     rect_buffer: Arc<CpuAccessibleBuffer<[UIVertex; 6]>>,
     elements: Vec<UIElement>,
-    digits: Vec<UIElement>
+    digits: Vec<UIElement>,
+    slash: UIElement,
+    win: UIElement,
+    lose: UIElement
 }
 
 #[derive(Clone)]
@@ -38,16 +43,24 @@ struct ShaderConstant {
     offset: [f32; 2]
 }
 
+fn tex_desc_set(layout: Arc<DescriptorSetLayout>, sampler: Arc<Sampler>, texture: &Texture) -> Arc<PersistentDescriptorSet> {
+    let mut builder = PersistentDescriptorSet::start(layout);
+    builder.add_sampled_image(texture.access(), sampler.clone()).unwrap();
+    Arc::new(builder.build().unwrap())
+}
+
 impl UserInterface {
     pub fn new(queue: Arc<Queue>, render_pass: Arc<RenderPass>) -> (UserInterface, Box<dyn GpuFuture>) {
         // Load textures
         let mut futures = Vec::new();
         let textures: HashMap<String, Texture> = [
             Texture::new(queue.clone(), "up.png"),
-            Texture::new(queue.clone(), "digits.png")
+            Texture::new(queue.clone(), "digits.png"),
+            Texture::new(queue.clone(), "win.png"),
+            Texture::new(queue.clone(), "lose.png")
         ].map(|(texture, future)| {
             futures.push(future);
-            (texture.file.to_owned(), texture)
+            (texture.file.split(".").next().unwrap().to_owned(), texture)
         }).into_iter().collect();
         let future = futures.into_iter().fold(sync::now(queue.device().clone()).boxed(), |acc, fut| {
             acc.join(fut).boxed()
@@ -59,11 +72,6 @@ impl UserInterface {
         // Initialize texture samplers
         let sampler = Sampler::simple_repeat_linear_no_mipmap(queue.device().clone());
         let layout = graphics_pipeline.layout().descriptor_set_layouts()[0].clone();
-        let desc_set = {
-            let mut builder = PersistentDescriptorSet::start(layout.clone());
-            builder.add_sampled_image(textures.get("up.png").unwrap().access(), sampler.clone()).unwrap();
-            Arc::new(builder.build().unwrap())
-        };
 
         // Build rect buffer
         let rect_buffer = CpuAccessibleBuffer::from_data(
@@ -71,44 +79,73 @@ impl UserInterface {
             BufferUsage::vertex_buffer(),
             false,
             [
-                [-1.0, -1.0],
-                [-1.0,  1.0],
-                [ 1.0, -1.0],
-                [ 1.0, -1.0],
-                [-1.0,  1.0],
-                [ 1.0,  1.0]
+                [0.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 0.0],
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 1.0]
             ].map(|xy| UIVertex { position: xy, uv: xy.map(|f| f.clamp(0.0, 1.0)) })).unwrap();
 
         // Build UI elements
         let up = UIElement {
-            texture_descriptor: desc_set,
+            texture_descriptor: tex_desc_set(layout.clone(), sampler.clone(), &textures["up"]),
             shader_constant: ShaderConstant { texture_region: [0.0, 0.0, 1.0, 1.0], size: [0.1, 0.1], offset: [0.9, 0.9] }
         };
-        let elements = vec![];
 
-        let digits_desc_set = {
-            let mut builder = PersistentDescriptorSet::start(layout.clone());
-            builder.add_sampled_image(textures.get("digits.png").unwrap().access(), sampler.clone()).unwrap();
-            Arc::new(builder.build().unwrap())
-        };
+        let digits_desc_set = tex_desc_set(layout.clone(), sampler.clone(), &textures["digits"]);
         let digits: Vec<UIElement> = (0..=9).map(|i| {
             UIElement { texture_descriptor: digits_desc_set.clone(), shader_constant: ShaderConstant {
                 texture_region: [DIGIT_WIDTH * i as f32, 0.0, DIGIT_WIDTH * (i + 1) as f32, DIGIT_HEIGHT],
                 size: [DIGIT_WIDTH, DIGIT_HEIGHT],
                 offset: [0.0, 0.0] // Will be set later, when needed
-            } }
-        }).collect();
+            } } }).collect();
+        let slash = UIElement {
+            texture_descriptor: digits_desc_set,
+            shader_constant: ShaderConstant {
+                texture_region: [0.0, DIGIT_HEIGHT, DIGIT_WIDTH, 2.0 * DIGIT_HEIGHT],
+                size: [DIGIT_WIDTH, DIGIT_HEIGHT],
+                offset: [1.0 - 3.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT] } };
 
-        (UserInterface { textures, graphics_pipeline, rect_buffer, elements, digits }, future)
+        let elements = vec![];
+
+        let win = UIElement { texture_descriptor: tex_desc_set(layout.clone(), sampler.clone(), &textures["win"]),
+            shader_constant: ShaderConstant {
+                texture_region: [0.0, 0.0, 1.0, 1.0],
+                size: [2.0, 2.0],
+                offset: [-1.0, -1.0]
+            } };
+        let lose = UIElement { texture_descriptor: tex_desc_set(layout.clone(), sampler.clone(), &textures["lose"]),
+            shader_constant: ShaderConstant {
+                texture_region: [0.0, 0.0, 1.0, 1.0],
+                size: [2.0, 2.0],
+                offset: [-1.0, -1.0]
+            } };
+
+        (UserInterface { textures, graphics_pipeline, rect_buffer, elements, digits, slash, win, lose }, future)
     }
 
-    pub fn render(&self, player: &Box<Player>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+    pub fn render(&self, player: &Box<Player>, params: &Params, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
         // Display player's score
-        let mut ones = self.digits[player.score as usize % 10].clone();
-        ones.shader_constant.offset = [1.0 - DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
-        let score = [ones];
+        let mut score_ones = self.digits[player.score as usize % 10].clone();
+        score_ones.shader_constant.offset = [1.0 - 4.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
+        let mut score_tens = self.digits[player.score as usize / 10 % 10].clone();
+        score_tens.shader_constant.offset = [1.0 - 5.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
+        let mut max_ones = self.digits[params.food % 10].clone();
+        max_ones.shader_constant.offset = [1.0 - 1.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
+        let mut max_tens = self.digits[params.food / 10 % 10].clone();
+        max_tens.shader_constant.offset = [1.0 - 2.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
+        let score = [score_tens, score_ones, self.slash.clone(), max_tens, max_ones];
 
-        let elements = self.elements.iter().chain(score.iter());
+        // Display win/lose screens
+        let screens = vec![self.lose.clone(), self.win.clone()];
+        let game_state_elements = match player.game_state {
+            GameState::Playing => &screens[0..0],
+            GameState::Lost => &screens[0..1],
+            GameState::Won => &screens[1..2]
+        }.iter();
+
+        let elements = self.elements.iter().chain(game_state_elements).chain(score.iter());
 
         builder
             .bind_pipeline_graphics(self.graphics_pipeline.clone());
@@ -138,7 +175,7 @@ fn graphics_pipeline(device: Arc<Device>, render_pass: Arc<RenderPass>) -> Arc<G
         .vertex_input_single_buffer::<UIVertex>()
         .vertex_shader(vertex_shader.main_entry_point(), ())
         .fragment_shader(fragment_shader.main_entry_point(), ())
-        .depth_stencil_simple_depth()
+        .depth_stencil_disabled() // Ignore depth testing for overlaying UI images
         .triangle_list()
         .blend_alpha_blending()
         .viewports_dynamic_scissors_irrelevant(1)

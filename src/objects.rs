@@ -22,7 +22,8 @@ pub struct Objects {
     time_start: Instant,
     food: HashMap<Coordinate, Food>,
     food_buffer: Arc<CpuAccessibleBuffer<[InstanceModel]>>,
-    dirty_buffer: bool
+    buffer_len: u32,
+    pub dirty_buffer: bool
 }
 
 impl Objects {
@@ -41,16 +42,25 @@ impl Objects {
         Objects {
             time_start: Instant::now(),
             food,
+            buffer_len: food_buffer.len() as u32,
             food_buffer,
             dirty_buffer: true
         }
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, player: &Player) {
         if self.dirty_buffer {
             if let Ok (mut access) = self.food_buffer.write() {
                 self.dirty_buffer = false;
-                let instances: Vec<InstanceModel> = self.food.values().map(|food| { food.model }).collect();
+                let instances: Vec<InstanceModel> = self.food.iter().filter_map(|((x, y, z, w), food)| {
+                    let (_x, _y, z, w) = (*x as i32, *y as i32, *z as i32, *w as i32);
+                    if z <= player.cell()[2] && z > player.cell()[2] - 6 && w >= player.cell()[3] - 1 && w <= player.cell()[3] + 1 {
+                        Some (food.model)
+                    } else {
+                        None
+                    }
+                }).collect();
+                self.buffer_len = instances.len() as u32;
                 for i in 0..instances.len() {
                     access[i] = instances[i];
                 }
@@ -78,7 +88,7 @@ impl Objects {
             .bind_vertex_buffers(0, (models["ceiling"].vertices.clone(), self.food_buffer.clone()))
             .draw(
                 models["ceiling"].vertices.len() as u32,
-                self.food.len() as u32,
+                self.buffer_len,
                 0,
                 0).unwrap();
     }

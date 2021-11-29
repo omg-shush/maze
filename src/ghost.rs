@@ -22,12 +22,14 @@ use crate::pipeline::Pipeline;
 use crate::linalg;
 
 pub struct Ghost {
+    grace: bool, // Grace period where ghost doesn't move till first food eaten
     position: [f32; 4],
     color: [f32; 3],
     reach_dest: Instant,
     dest_position: [usize; 4],
     init_position: [usize; 4],
     move_time: f32,
+    current_move_time: f32, // Incorporates speed penalties for 3rd or 4th dimensional movement
     instant_start: Instant,
     world: Rc<RefCell<World>>,
     vertex_buffer: Arc<ImmutableBuffer<[Vertex]>>,
@@ -47,12 +49,14 @@ impl Ghost {
             queue.clone()).unwrap();
         
         (Ghost {
+            grace: true,
             position,
             color,
             reach_dest: Instant::now(),
             dest_position,
             init_position: dest_position,
             move_time: params.ghost_move_time,
+            current_move_time: params.ghost_move_time,
             instant_start: Instant::now(),
             world,
             vertex_buffer,
@@ -62,6 +66,14 @@ impl Ghost {
     }
 
     pub fn update(&mut self, player: &mut Player) {
+        if self.grace {
+            if player.score > 0 {
+                self.grace = false;
+            } else {
+                return;
+            }
+        }
+
         let now = Instant::now();
         
         // Did we reach the player?
@@ -78,12 +90,20 @@ impl Ghost {
             let ghost_pos = (self.dest_position[0] as usize, self.dest_position[1] as usize, self.dest_position[2] as usize, self.dest_position[3] as usize);
             let player_pos = (player.cell()[0] as usize, player.cell()[1] as usize, player.cell()[2] as usize, player.cell()[3] as usize);
             // Next target position
-            let (x, y, z, w) = self.world.borrow_mut().bfs(ghost_pos, player_pos)[1]; // IDK why mutable borrow is necessary
+            let (x, y, z, w) = self.world.borrow().bfs(ghost_pos, player_pos)[1];
             self.dest_position = [x, y, z, w];
-            self.reach_dest = now + Duration::from_secs_f32(self.move_time);
+            self.current_move_time = self.move_time *
+                if self.dest_position[2] != self.init_position[2] {
+                    2.0 // Vertical penalty
+                } else if self.dest_position[3] != self.dest_position[3] {
+                    5.0 // Fourth penalty
+                } else {
+                    1.0
+                };
+            self.reach_dest = now + Duration::from_secs_f32(self.current_move_time);
         } else {
             // Animate movement
-            let progress = 1.0 - (self.reach_dest - now).as_secs_f32() / self.move_time; // ranges from 0.0 at start to 1.0 at dest
+            let progress = 1.0 - (self.reach_dest - now).as_secs_f32() / self.current_move_time; // ranges from 0.0 at start to 1.0 at dest
             self.position = [0, 1, 2, 3].map(|i| self.init_position[i] as f32 + (self.dest_position[i] as f32 - self.init_position[i] as f32) * progress);
         }
     }
@@ -94,8 +114,10 @@ impl Ghost {
         let instance_buffer = self.instance_buffer_pool.next([InstanceModel {
             m: linalg::translate([x, self.position[1], z])
         }]).unwrap();
+        let mut light_position: [f32; 3] = self.position[0..3].try_into().unwrap();
+        light_position[2] = player.get_position()[2] + 1.0; // Only light up ghost if it's on the same z level
         let player_position_buffer = self.player_position_buffer_pool.next(
-            PlayerPositionData { pos: linalg::add(self.position[0..3].try_into().unwrap(), [0.0, 0.0, 1.0]) }).unwrap(); // Always light self
+            PlayerPositionData { pos: light_position }).unwrap();
         let descriptor_set = {
             let mut builder = desc_set_pool.next();
             builder.add_buffer(Arc::new(player_position_buffer)).unwrap();

@@ -50,7 +50,7 @@ impl Params {
             samples,
             sample_count,
             dimensions,
-            ghost_move_time: 0.8,
+            ghost_move_time: 1.65,
             fps: 60.0,
             food: 10
         }
