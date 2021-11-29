@@ -29,7 +29,7 @@ impl Params {
         // First arg is path to executable
         let dimensions: [usize; 4] =
             if dimensions.len() != 5 {
-                [10, 10, 1, 1]
+                [5, 5, 5, 5]
             } else {
                 [&dimensions[1], &dimensions[2], &dimensions[3], &dimensions[4]].map(|s| s.parse::<usize>().unwrap())
             };

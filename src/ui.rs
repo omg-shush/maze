@@ -8,22 +8,23 @@ use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint};
 use vulkano::render_pass::{RenderPass, Subpass};
 use vulkano::sampler::Sampler;
-use vulkano::sync::{self, GpuFuture};
 use vulkano::device::{Queue, Device};
 use vulkano::impl_vertex;
 
 use crate::parameters::Params;
 use crate::player::{GameState, Player};
 use crate::texture::Texture;
+use crate::world::World;
 
 const DIGIT_WIDTH: f32 = 1.0 / 10.0;
 const DIGIT_HEIGHT: f32 = 100.0 / 512.0;
+const CONTROL_WIDTH: f32 = 0.093;
+const CONTROL_HEIGHT: f32 = 100.0 / 512.0;
 
 pub struct UserInterface {
-    textures: HashMap<String, Texture>,
     graphics_pipeline: Arc<GraphicsPipeline>,
     rect_buffer: Arc<CpuAccessibleBuffer<[UIVertex; 6]>>,
-    elements: Vec<UIElement>,
+    controls: Vec<([i32; 4], UIElement, UIElement)>,
     digits: Vec<UIElement>,
     slash: UIElement,
     win: UIElement,
@@ -36,12 +37,7 @@ struct UIElement {
     shader_constant: ShaderConstant
 }
 
-#[derive(Clone, Copy)]
-struct ShaderConstant {
-    texture_region: [f32; 4],
-    size: [f32; 2],
-    offset: [f32; 2]
-}
+type ShaderConstant = vs::ty::ShaderConstant;
 
 fn tex_desc_set(layout: Arc<DescriptorSetLayout>, sampler: Arc<Sampler>, texture: &Texture) -> Arc<PersistentDescriptorSet> {
     let mut builder = PersistentDescriptorSet::start(layout);
@@ -50,22 +46,7 @@ fn tex_desc_set(layout: Arc<DescriptorSetLayout>, sampler: Arc<Sampler>, texture
 }
 
 impl UserInterface {
-    pub fn new(queue: Arc<Queue>, render_pass: Arc<RenderPass>) -> (UserInterface, Box<dyn GpuFuture>) {
-        // Load textures
-        let mut futures = Vec::new();
-        let textures: HashMap<String, Texture> = [
-            Texture::new(queue.clone(), "up.png"),
-            Texture::new(queue.clone(), "digits.png"),
-            Texture::new(queue.clone(), "win.png"),
-            Texture::new(queue.clone(), "lose.png")
-        ].map(|(texture, future)| {
-            futures.push(future);
-            (texture.file.split(".").next().unwrap().to_owned(), texture)
-        }).into_iter().collect();
-        let future = futures.into_iter().fold(sync::now(queue.device().clone()).boxed(), |acc, fut| {
-            acc.join(fut).boxed()
-        });
-
+    pub fn new(queue: Arc<Queue>, render_pass: Arc<RenderPass>, textures: &HashMap<String, Texture>) -> UserInterface {
         // Initialize pipeline for displaying UI
         let graphics_pipeline = graphics_pipeline(queue.device().clone(), render_pass.clone());
 
@@ -88,10 +69,38 @@ impl UserInterface {
             ].map(|xy| UIVertex { position: xy, uv: xy.map(|f| f.clamp(0.0, 1.0)) })).unwrap();
 
         // Build UI elements
-        let up = UIElement {
-            texture_descriptor: tex_desc_set(layout.clone(), sampler.clone(), &textures["up"]),
-            shader_constant: ShaderConstant { texture_region: [0.0, 0.0, 1.0, 1.0], size: [0.1, 0.1], offset: [0.9, 0.9] }
-        };
+        let controls_desc = tex_desc_set(layout.clone(), sampler.clone(), &textures["controls"]);
+        let controls_dim_desc = tex_desc_set(layout.clone(), sampler.clone(), &textures["controls_dim"]);
+        let control_width = 0.1;
+        let control_height = 0.16;
+        let [mut control_w, mut control_a, mut control_s, mut control_d,
+            mut control_q, mut control_e, mut control_space, mut control_lctrl] =
+            [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0].map(|i| {
+                UIElement { texture_descriptor: controls_desc.clone(), shader_constant: ShaderConstant {
+                    texture_region: [i * CONTROL_WIDTH, 0.0, (i + 1.0) * CONTROL_WIDTH, CONTROL_HEIGHT],
+                    size: [control_width, control_height], offset: [0.0, 0.0] } } });
+        let (control_x_pos, control_y_pos) = (-0.84, -0.92);
+        control_w.shader_constant.offset = [control_x_pos, control_y_pos];
+        control_a.shader_constant.offset = [control_x_pos - control_width, control_y_pos + control_height];
+        control_s.shader_constant.offset = [control_x_pos, control_y_pos + control_height];
+        control_d.shader_constant.offset = [control_x_pos + control_width, control_y_pos + control_height];
+        control_q.shader_constant.offset = [control_x_pos - 1.4 * control_width, control_y_pos - 0.2 * control_height];
+        control_e.shader_constant.offset = [control_x_pos + 1.4 * control_width, control_y_pos - 0.2 * control_height];
+        control_space.shader_constant.offset = [control_x_pos + control_width * 2.25, control_y_pos - control_height / 2.0];
+        control_lctrl.shader_constant.offset = [control_x_pos + control_width * 2.25, control_y_pos + control_height / 2.0];
+        let controls = [
+            ([0, -1, 0, 0], control_w),
+            ([-1, 0, 0, 0], control_a),
+            ([0, 1, 0, 0], control_s),
+            ([1, 0, 0, 0], control_d),
+            ([0, 0, 0, -1], control_q),
+            ([0, 0, 0, 1], control_e),
+            ([0, 0, 1, 0], control_space),
+            ([0, 0, -1, 0], control_lctrl)].map(|(delta, control)| {
+                let mut dim = control.clone();
+                dim.texture_descriptor = controls_dim_desc.clone();
+                (delta, control, dim)
+            }).to_vec();
 
         let digits_desc_set = tex_desc_set(layout.clone(), sampler.clone(), &textures["digits"]);
         let digits: Vec<UIElement> = (0..=9).map(|i| {
@@ -107,8 +116,6 @@ impl UserInterface {
                 size: [DIGIT_WIDTH, DIGIT_HEIGHT],
                 offset: [1.0 - 3.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT] } };
 
-        let elements = vec![];
-
         let win = UIElement { texture_descriptor: tex_desc_set(layout.clone(), sampler.clone(), &textures["win"]),
             shader_constant: ShaderConstant {
                 texture_region: [0.0, 0.0, 1.0, 1.0],
@@ -122,10 +129,19 @@ impl UserInterface {
                 offset: [-1.0, -1.0]
             } };
 
-        (UserInterface { textures, graphics_pipeline, rect_buffer, elements, digits, slash, win, lose }, future)
+        UserInterface { graphics_pipeline, rect_buffer, controls, digits, slash, win, lose }
     }
 
-    pub fn render(&self, player: &Box<Player>, params: &Params, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+    pub fn render(&self, player: &Player, world: &World, params: &Params, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+        // Display valid controls
+        let controls = self.controls.iter().filter_map(|(delta, control, dim)| {
+            if world.check_move(player.cell(), *delta) {
+                Some (control)
+            } else {
+                Some (dim)
+            }
+        });
+
         // Display player's score
         let mut score_ones = self.digits[player.score as usize % 10].clone();
         score_ones.shader_constant.offset = [1.0 - 4.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
@@ -145,7 +161,7 @@ impl UserInterface {
             GameState::Won => &screens[1..2]
         }.iter();
 
-        let elements = self.elements.iter().chain(game_state_elements).chain(score.iter());
+        let elements = controls.chain(game_state_elements).chain(score.iter());
 
         builder
             .bind_pipeline_graphics(self.graphics_pipeline.clone());
@@ -200,15 +216,16 @@ pub mod vs {
         layout(location = 0) in vec2 position;
         layout(location = 1) in vec2 uv;
         layout(push_constant) uniform ShaderConstant {
-            vec2 tex_start;
-            vec2 tex_finish;
+            vec4 texture_region;
             vec2 size;
             vec2 offset;
         } sc;
         layout(location = 0) out vec2 passUv;
         void main() {
+            vec2 tex_start = sc.texture_region.xy;
+            vec2 tex_finish = sc.texture_region.zw;
             gl_Position = vec4(position * sc.size + sc.offset, 0.0, 1.0);
-            passUv = vec2(uv.x * (sc.tex_finish.x - sc.tex_start.x) + sc.tex_start.x, uv.y * (sc.tex_finish.y - sc.tex_start.y) + sc.tex_start.y);
+            passUv = vec2(uv.x * (tex_finish.x - tex_start.x) + tex_start.x, uv.y * (tex_finish.y - tex_start.y) + tex_start.y);
         }
         ",
         types_meta: {

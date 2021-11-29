@@ -30,13 +30,12 @@ use vulkano::format::{ClearValue, Format};
 use world::World;
 use pipeline::cs::ty::Vertex;
 use parameters::Params;
-use player::Player;
+use player::{Player, GameState};
 use model::Model;
 use ui::UserInterface;
 use ghost::Ghost;
 use objects::Objects;
-
-use crate::player::GameState;
+use texture::Texture;
 
 mod world;
 mod pipeline;
@@ -126,8 +125,9 @@ fn main() {
     // Compile shader pipeline
     let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
 
-    // Load models
     let mut init_futures = Vec::new();
+
+    // Load models
     let models: HashMap<String, Box<Model>> = [
         Model::new(draw_queue.clone(), "wall.obj"),
         Model::new(draw_queue.clone(), "floor.obj"),
@@ -138,13 +138,24 @@ fn main() {
         (model.file.to_owned(), model)
     }).into_iter().collect();
 
+    // Load textures
+    let textures: HashMap<String, Texture> = [
+        Texture::new(draw_queue.clone(), "controls.png"),
+        Texture::new(draw_queue.clone(), "controls_dim.png"),
+        Texture::new(draw_queue.clone(), "digits.png"),
+        Texture::new(draw_queue.clone(), "win.png"),
+        Texture::new(draw_queue.clone(), "lose.png")
+    ].map(|(texture, future)| {
+        init_futures.push(future);
+        (texture.file.split(".").next().unwrap().to_owned(), texture)
+    }).into_iter().collect();
+
     // Initialize game elements
-    let (ui, ui_future) = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone());
     let (world, world_init_future) = World::new(&params, draw_queue.clone());
     let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone(), world.clone());
     let (mut ghost, ghost_init_future) = Ghost::new(&params, draw_queue.clone(), world.clone(), [1.0, 1.0, 1.0]);
     let mut objects = Objects::new(draw_queue.clone(), &mut world.borrow_mut(), &params);
-    init_futures.push(ui_future);
+    let ui = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone(), &textures);
     init_futures.push(world_init_future);
     init_futures.push(player_init_future);
     init_futures.push(ghost_init_future);
@@ -366,7 +377,7 @@ fn main() {
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone());
                 
                 // Game over; only render UI
-                ui.render(&player, &params, &mut builder);
+                ui.render(&player, &world.borrow(), &params, &mut builder);
 
                 builder.end_render_pass().unwrap();
             } else {
@@ -383,7 +394,7 @@ fn main() {
                 player.render(&mut desc_set_pool, &mut builder, &pipeline);
                 ghost.render(&player, &mut desc_set_pool, &mut builder, &pipeline);
                 objects.render(&player, &world.borrow(), &models, &mut builder, &pipeline);
-                ui.render(&player, &params, &mut builder);
+                ui.render(&player, &world.borrow(), &params, &mut builder);
                 
                 builder.end_render_pass().unwrap();
             }
