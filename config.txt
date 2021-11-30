@@ -1,0 +1,7 @@
+# Which graphics card to use (0, 1, 2, ...), or "discrete" to prefer the first discrete card found
+card: discrete
+
+# Path to resource directory, containing models and textures. Defaults to "res"
+resources: res
+
+resolution: 640x640

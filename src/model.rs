@@ -14,9 +14,9 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn new(queue: Arc<Queue>, filename: &str) -> (Box<Model>, Box<dyn GpuFuture>) {
+    pub fn new(queue: Arc<Queue>, filename: &str) -> (Model, Box<dyn GpuFuture>) {
         let mut vertices = Vec::new();
-        let file = fs::File::open("res/".to_owned() + filename).expect(&format!("Failed to load model `{}'", filename));
+        let file = fs::File::open(filename).expect(&format!("Failed to load model `{}'", filename));
         let reader = BufReader::new(file);
         let mut v: Vec<[f32; 3]> = Vec::new();
         let mut vn: Vec<[f32; 3]> = Vec::new();
@@ -62,9 +62,9 @@ impl Model {
             BufferUsage::vertex_buffer(),
             queue
         ).unwrap();
-        (Box::new(Model {
+        (Model {
             file: filename.split('.').next().unwrap().to_owned(),
             vertices
-        }), future.boxed())
+        }, future.boxed())
     }
 }

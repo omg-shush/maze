@@ -15,7 +15,7 @@ pub struct Texture {
 
 impl Texture {
     pub fn new(queue: Arc<Queue>, file: &str) -> (Texture, Box<dyn GpuFuture>) {
-        let mut decoder = Decoder::new(File::open("res/".to_owned() + file).expect("Failed to open file"));
+        let mut decoder = Decoder::new(File::open(file).expect("Failed to open file"));
         decoder.set_transformations(Transformations::empty());
         let mut reader = decoder.read_info().unwrap();
         let dimensions = ImageDimensions::Dim2d {

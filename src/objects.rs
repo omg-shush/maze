@@ -68,7 +68,7 @@ impl Objects {
         }
     }
 
-    pub fn render(&self, player: &Player, world: &World, models: &HashMap<String, Box<Model>>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
+    pub fn render(&self, player: &Player, world: &World, models: &HashMap<String, Model>, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
         let food_color = RAINBOW[2];
         // let instances: Vec<InstanceModel> = self.food.values().map(|food| { food.model }).collect();
         // builder.update_buffer(self.food_buffer.clone(), &instances[..]).unwrap();

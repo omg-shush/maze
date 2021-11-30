@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::vec;
 use std::sync::Arc;
 use std::time::Instant;
+use std::env;
 
 use vulkano::descriptor_set::{SingleLayoutDescSetPool};
 use vulkano_win::VkSurfaceBuild;
@@ -36,6 +37,7 @@ use ui::UserInterface;
 use ghost::Ghost;
 use objects::Objects;
 use texture::Texture;
+use config::Config;
 
 mod world;
 mod pipeline;
@@ -49,10 +51,15 @@ mod texture;
 mod ui;
 mod ghost;
 mod objects;
+mod config;
 
 const NAME: &str = "4D Pacman v0.2";
 
 fn main() {
+    // Load user config file
+    let path = env::args().nth(1).unwrap_or("config.txt".to_owned());
+    let config = Config::new(&path);
+
     // Create vulkan instance
     let app_infos = ApplicationInfo {
         application_name: Some(Cow::from(NAME)),
@@ -70,7 +77,10 @@ fn main() {
         let card_list = PhysicalDevice::enumerate(&instance).collect::<Vec<_>>();
         println!("Card list: {:?}", card_list.iter().map(|c| c.properties().device_name.clone()).collect::<Vec<_>>());
         let mut discrete_list = card_list.clone().into_iter().filter(|c| c.properties().device_type == PhysicalDeviceType::DiscreteGpu);
-        discrete_list.next().unwrap_or(card_list[0])
+        match config.card {
+            config::Card::Discrete => discrete_list.next().unwrap_or(card_list[0]),
+            config::Card::Number (n) => *card_list.get(n).expect("Specified graphics card number doesn't exist")
+        }
     };
     println!("Using card {}", card.properties().device_name);
 
@@ -83,30 +93,27 @@ fn main() {
         khr_swapchain: true,
         .. DeviceExtensions::none()
     };
-    let draw_queue = card.queue_families().find(|&q| q.supports_graphics()).unwrap();
-    let queues = [(draw_queue, 1.0)];
+    let draw_family = card.queue_families().find(|&q| q.supports_graphics()).unwrap();
+    let queues = [(draw_family, 1.0)];
     let (device, mut qs) = Device::new(card, &features, &extensions, queues.iter().cloned()).unwrap();
     let draw_queue = qs.next().unwrap();
-    println!("Created logical vulkan device {:?}", device);
 
     // Create window
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
-        .with_inner_size(LogicalSize { width: 640, height: 640 })
-        .with_position(PhysicalPosition { x : 300, y: 200 })
+        .with_inner_size(LogicalSize { width: , height: 640 })
+        .with_position(PhysicalPosition { x : 0, y: 0 })
         .with_resizable(false)
         .with_title(NAME)
         .build_vk_surface(&event_loop, instance.clone()).unwrap();
 
     // Configure parameters
     let params = Params::new(device.clone());
-    println!("{:?}", params);
 
     // Create swapchain
     let surface_caps = surface.capabilities(card).unwrap();
     let resolution = surface_caps.max_image_extent;
     let buffers = 2.clamp(surface_caps.min_image_count, surface_caps.max_image_count.unwrap_or(u32::MAX));
-    println!("Using {} buffers. Min ({}) max {:?}", buffers, surface_caps.min_image_count, surface_caps.max_image_count);
     let transform = surface_caps.current_transform;
     let (format, _color_space) = surface_caps.supported_formats[0];
     let usage = ImageUsage {
@@ -120,7 +127,6 @@ fn main() {
                                      .usage(usage)
                                      .transform(transform)
                                      .build().unwrap();
-    println!("Created swapchain {:?}", swapchain);
 
     // Compile shader pipeline
     let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
@@ -128,24 +134,26 @@ fn main() {
     let mut init_futures = Vec::new();
 
     // Load models
-    let models: HashMap<String, Box<Model>> = [
-        Model::new(draw_queue.clone(), "wall.obj"),
-        Model::new(draw_queue.clone(), "floor.obj"),
-        Model::new(draw_queue.clone(), "corner.obj"),
-        Model::new(draw_queue.clone(), "ceiling.obj")
-    ].map(|(model, future)| {
+    let models: HashMap<String, Model> = [
+        "wall.obj",
+        "floor.obj",
+        "corner.obj",
+        "ceiling.obj"
+    ].map(|file| {
+        let (model, future) = Model::new(draw_queue.clone(), &(config.resource_path.clone() + file));
         init_futures.push(future);
         (model.file.to_owned(), model)
     }).into_iter().collect();
 
     // Load textures
     let textures: HashMap<String, Texture> = [
-        Texture::new(draw_queue.clone(), "controls.png"),
-        Texture::new(draw_queue.clone(), "controls_dim.png"),
-        Texture::new(draw_queue.clone(), "digits.png"),
-        Texture::new(draw_queue.clone(), "win.png"),
-        Texture::new(draw_queue.clone(), "lose.png")
-    ].map(|(texture, future)| {
+        "controls.png",
+        "controls_dim.png",
+        "digits.png",
+        "win.png",
+        "lose.png"
+    ].map(|file| {
+        let (texture, future) = Texture::new(draw_queue.clone(), &(config.resource_path.clone() + file));
         init_futures.push(future);
         (texture.file.split(".").next().unwrap().to_owned(), texture)
     }).into_iter().collect();
@@ -164,14 +172,13 @@ fn main() {
         acc.join(future).boxed()
     }).then_signal_fence_and_flush().expect("Flushing init commands failed");
 
+    println!("Edit the provided config.txt file, or specify a custom file path as the first command line argument");
     println!("---------------------------");
     println!("{0}", NAME);
     println!("WASD or Arrow Keys to move horizontally");
     println!("SPACE to move up, LeftControl to move down");
     println!("Q and E to move through left and right portals");
     println!("green screen = win");
-    println!("Specify custom dimensions as command line arguments, eg:");
-    println!("    maze.exe 10 10 10 10");
 
     // Initialize framebuffers
     let dimensions = images[0].dimensions();
