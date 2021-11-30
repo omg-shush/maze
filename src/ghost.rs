@@ -12,10 +12,9 @@ use vulkano::pipeline::PipelineBindPoint;
 use crate::pipeline::InstanceModel;
 use crate::player::{GameState, Player};
 use crate::world::World;
-use crate::parameters::Params;
+use crate::config::Config;
 use crate::pipeline::cs::ty::Vertex;
-use crate::pipeline::fs::ty::PlayerPositionData;
-use crate::pipeline::vs::ty::ViewProjectionData;
+use crate::pipeline::vs::ty::{ViewProjectionData, PlayerPositionData};
 use crate::pipeline::Pipeline;
 use crate::linalg;
 
@@ -35,9 +34,9 @@ pub struct Ghost {
 }
 
 impl Ghost {
-    pub fn new(params: &Params, queue: Arc<Queue>, color: [f32; 3]) -> (Ghost, Box<dyn GpuFuture>) {
+    pub fn new(config: &Config, queue: Arc<Queue>, color: [f32; 3]) -> (Ghost, Box<dyn GpuFuture>) {
         let mut rng = thread_rng();
-        let dest_position = params.dimensions.map(|d| rng.gen_range(d/2..d));
+        let dest_position = config.dimensions.map(|d| rng.gen_range(d/2..d));
         let position = dest_position.map(|i| i as f32);
 
         let (vertex_buffer, future) = ImmutableBuffer::from_iter(
@@ -52,8 +51,8 @@ impl Ghost {
             reach_dest: Instant::now(),
             dest_position,
             init_position: dest_position,
-            move_time: params.ghost_move_time,
-            current_move_time: params.ghost_move_time,
+            move_time: config.ghost_move_time,
+            current_move_time: config.ghost_move_time,
             instant_start: Instant::now(),
             vertex_buffer,
             instance_buffer_pool: CpuBufferPool::new(queue.device().clone(), BufferUsage::vertex_buffer()),
@@ -86,7 +85,7 @@ impl Ghost {
             let ghost_pos = (self.dest_position[0] as usize, self.dest_position[1] as usize, self.dest_position[2] as usize, self.dest_position[3] as usize);
             let player_pos = (player.cell()[0] as usize, player.cell()[1] as usize, player.cell()[2] as usize, player.cell()[3] as usize);
             // Next target position
-            let (x, y, z, w) = world.bfs(ghost_pos, player_pos)[1];
+            let (x, y, z, w) = *world.bfs(ghost_pos, player_pos).get(1).unwrap_or(&ghost_pos);
             self.dest_position = [x, y, z, w];
             self.current_move_time = self.move_time *
                 if self.dest_position[2] != self.init_position[2] {
@@ -105,15 +104,13 @@ impl Ghost {
     }
 
     pub fn render(&self, player: &Player, world: &World, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
-        let x = self.position[0] + (self.position[3] - player.get_position()[3]) * ((world.width + 1) as f32);
-        let z = self.position[2] + ((Instant::now() - self.instant_start).as_secs_f32() * 3.0).sin() / 4.0;
+        let position = self.world_position(player, world);
         let instance_buffer = self.instance_buffer_pool.next([InstanceModel {
-            m: linalg::translate([x, self.position[1], z])
-        }]).unwrap();
-        let mut light_position: [f32; 3] = self.position[0..3].try_into().unwrap();
-        light_position[2] = player.get_position()[2] + 1.0; // Only light up ghost if it's on the same z level
-        let player_position_buffer = self.player_position_buffer_pool.next(
-            PlayerPositionData { pos: light_position }).unwrap();
+            m: linalg::translate(position) }]).unwrap();
+        let player_position_buffer = self.player_position_buffer_pool.next(PlayerPositionData {
+                player_pos: player.get_position()[0..3].try_into().unwrap(),
+                ghost_pos: linalg::add(position, [0.0, 0.0, 1.0]),
+                ..Default::default() }).unwrap();
         let descriptor_set = {
             let mut builder = desc_set_pool.next();
             builder.add_buffer(Arc::new(player_position_buffer)).unwrap();
@@ -135,6 +132,16 @@ impl Ghost {
                 instance_buffer.len() as u32,
                 0,
                 0).unwrap();
+    }
+
+    pub fn position(&self) -> [f32; 4] {
+        self.position
+    }
+
+    pub fn world_position(&self, player: &Player, world: &World) -> [f32; 3] {
+        let x = self.position[0] + (self.position[3] - player.get_position()[3]) * ((world.width + 1) as f32);
+        let z = self.position[2] + ((Instant::now() - self.instant_start).as_secs_f32() * 3.0).sin() / 4.0;
+        [x, self.position[1], z]
     }
 }
 

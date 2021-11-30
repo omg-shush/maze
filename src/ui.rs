@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::iter::empty;
 use std::sync::Arc;
 
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
@@ -11,7 +12,7 @@ use vulkano::sampler::Sampler;
 use vulkano::device::{Queue, Device};
 use vulkano::impl_vertex;
 
-use crate::parameters::Params;
+use crate::config::Config;
 use crate::player::{GameState, Player};
 use crate::texture::Texture;
 use crate::world::World;
@@ -24,6 +25,8 @@ const CONTROL_HEIGHT: f32 = 100.0 / 512.0;
 pub struct UserInterface {
     graphics_pipeline: Arc<GraphicsPipeline>,
     rect_buffer: Arc<CpuAccessibleBuffer<[UIVertex; 6]>>,
+    scale_x: f32,
+    scale_y: f32,
     controls: Vec<([i32; 4], UIElement, UIElement)>,
     digits: Vec<UIElement>,
     slash: UIElement,
@@ -46,7 +49,7 @@ fn tex_desc_set(layout: Arc<DescriptorSetLayout>, sampler: Arc<Sampler>, texture
 }
 
 impl UserInterface {
-    pub fn new(queue: Arc<Queue>, render_pass: Arc<RenderPass>, textures: &HashMap<String, Texture>) -> UserInterface {
+    pub fn new(queue: Arc<Queue>, render_pass: Arc<RenderPass>, textures: &HashMap<String, Texture>, resolution: [u32; 2], config: &Config) -> UserInterface {
         // Initialize pipeline for displaying UI
         let graphics_pipeline = graphics_pipeline(queue.device().clone(), render_pass.clone());
 
@@ -68,26 +71,30 @@ impl UserInterface {
                 [1.0, 1.0]
             ].map(|xy| UIVertex { position: xy, uv: xy.map(|f| f.clamp(0.0, 1.0)) })).unwrap();
 
+        // Use UI scaling
+        let [digit_ui_width, digit_ui_height] =
+            [DIGIT_WIDTH, DIGIT_HEIGHT].map(|f| f * config.ui_scale);
+
         // Build UI elements
         let controls_desc = tex_desc_set(layout.clone(), sampler.clone(), &textures["controls"]);
         let controls_dim_desc = tex_desc_set(layout.clone(), sampler.clone(), &textures["controls_dim"]);
-        let control_width = 0.1;
-        let control_height = 0.16;
+        let control_ui_width = 0.1 * config.ui_scale;
+        let control_ui_height = 0.16 * config.ui_scale;
         let [mut control_w, mut control_a, mut control_s, mut control_d,
             mut control_q, mut control_e, mut control_space, mut control_lctrl] =
             [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0].map(|i| {
                 UIElement { texture_descriptor: controls_desc.clone(), shader_constant: ShaderConstant {
                     texture_region: [i * CONTROL_WIDTH, 0.0, (i + 1.0) * CONTROL_WIDTH, CONTROL_HEIGHT],
-                    size: [control_width, control_height], offset: [0.0, 0.0] } } });
+                    size: [control_ui_width, control_ui_height], offset: [0.0, 0.0] } } });
         let (control_x_pos, control_y_pos) = (-0.84, -0.92);
         control_w.shader_constant.offset = [control_x_pos, control_y_pos];
-        control_a.shader_constant.offset = [control_x_pos - control_width, control_y_pos + control_height];
-        control_s.shader_constant.offset = [control_x_pos, control_y_pos + control_height];
-        control_d.shader_constant.offset = [control_x_pos + control_width, control_y_pos + control_height];
-        control_q.shader_constant.offset = [control_x_pos - 1.4 * control_width, control_y_pos - 0.2 * control_height];
-        control_e.shader_constant.offset = [control_x_pos + 1.4 * control_width, control_y_pos - 0.2 * control_height];
-        control_space.shader_constant.offset = [control_x_pos + control_width * 2.25, control_y_pos - control_height / 2.0];
-        control_lctrl.shader_constant.offset = [control_x_pos + control_width * 2.25, control_y_pos + control_height / 2.0];
+        control_a.shader_constant.offset = [control_x_pos - 0.66 * control_ui_width, control_y_pos + control_ui_height];
+        control_s.shader_constant.offset = [control_x_pos + 0.33 * control_ui_width, control_y_pos + control_ui_height];
+        control_d.shader_constant.offset = [control_x_pos + 1.33 * control_ui_width, control_y_pos + control_ui_height];
+        control_q.shader_constant.offset = [control_x_pos - control_ui_width, control_y_pos];
+        control_e.shader_constant.offset = [control_x_pos + control_ui_width, control_y_pos];
+        control_space.shader_constant.offset = [control_x_pos + control_ui_width * 2.5, control_y_pos];
+        control_lctrl.shader_constant.offset = [control_x_pos + control_ui_width * 2.5, control_y_pos + control_ui_height];
         let controls = [
             ([0, -1, 0, 0], control_w),
             ([-1, 0, 0, 0], control_a),
@@ -106,15 +113,15 @@ impl UserInterface {
         let digits: Vec<UIElement> = (0..=9).map(|i| {
             UIElement { texture_descriptor: digits_desc_set.clone(), shader_constant: ShaderConstant {
                 texture_region: [DIGIT_WIDTH * i as f32, 0.0, DIGIT_WIDTH * (i + 1) as f32, DIGIT_HEIGHT],
-                size: [DIGIT_WIDTH, DIGIT_HEIGHT],
+                size: [digit_ui_width, digit_ui_height],
                 offset: [0.0, 0.0] // Will be set later, when needed
             } } }).collect();
         let slash = UIElement {
             texture_descriptor: digits_desc_set,
             shader_constant: ShaderConstant {
                 texture_region: [0.0, DIGIT_HEIGHT, DIGIT_WIDTH, 2.0 * DIGIT_HEIGHT],
-                size: [DIGIT_WIDTH, DIGIT_HEIGHT],
-                offset: [1.0 - 3.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT] } };
+                size: [digit_ui_width, digit_ui_height],
+                offset: [1.0 - 3.0 * digit_ui_width, 1.0 - digit_ui_height] } };
 
         let win = UIElement { texture_descriptor: tex_desc_set(layout.clone(), sampler.clone(), &textures["win"]),
             shader_constant: ShaderConstant {
@@ -129,10 +136,15 @@ impl UserInterface {
                 offset: [-1.0, -1.0]
             } };
 
-        UserInterface { graphics_pipeline, rect_buffer, controls, digits, slash, win, lose }
+        // Compensate for aspect ratio
+        let [x, y] = resolution;
+        let ratio = x as f32 / y as f32;
+        let (scale_x, scale_y) = if ratio >= 1.0 { (ratio, 1.0) } else { (1.0, 1.0 / ratio) };
+
+        UserInterface { graphics_pipeline, rect_buffer, scale_x, scale_y, controls, digits, slash, win, lose }
     }
 
-    pub fn render(&self, player: &Player, world: &World, params: &Params, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+    pub fn render(&self, player: &Player, world: &World, config: &Config, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
         // Display valid controls
         let controls = self.controls.iter().filter_map(|(delta, control, dim)| {
             if world.check_move(player.cell(), *delta) {
@@ -142,15 +154,17 @@ impl UserInterface {
             }
         });
 
+        let [digit_ui_width, digit_ui_height] = [DIGIT_WIDTH, DIGIT_HEIGHT].map(|f| f * config.ui_scale);
+
         // Display player's score
         let mut score_ones = self.digits[player.score as usize % 10].clone();
-        score_ones.shader_constant.offset = [1.0 - 4.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
+        score_ones.shader_constant.offset = [1.0 - 4.0 * digit_ui_width, 1.0 - digit_ui_height];
         let mut score_tens = self.digits[player.score as usize / 10 % 10].clone();
-        score_tens.shader_constant.offset = [1.0 - 5.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
-        let mut max_ones = self.digits[params.food % 10].clone();
-        max_ones.shader_constant.offset = [1.0 - 1.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
-        let mut max_tens = self.digits[params.food / 10 % 10].clone();
-        max_tens.shader_constant.offset = [1.0 - 2.0 * DIGIT_WIDTH, 1.0 - DIGIT_HEIGHT];
+        score_tens.shader_constant.offset = [1.0 - 5.0 * digit_ui_width, 1.0 - digit_ui_height];
+        let mut max_ones = self.digits[config.food_count % 10].clone();
+        max_ones.shader_constant.offset = [1.0 - 1.0 * digit_ui_width, 1.0 - digit_ui_height];
+        let mut max_tens = self.digits[config.food_count / 10 % 10].clone();
+        max_tens.shader_constant.offset = [1.0 - 2.0 * digit_ui_width, 1.0 - digit_ui_height];
         let score = [score_tens, score_ones, self.slash.clone(), max_tens, max_ones];
 
         // Display win/lose screens
@@ -161,7 +175,35 @@ impl UserInterface {
             GameState::Won => &screens[1..2]
         }.iter();
 
-        let elements = controls.chain(game_state_elements).chain(score.iter());
+        let mut elements = Box::new(empty()) as Box<dyn Iterator<Item = &UIElement>>;
+        if config.display_controls {
+            elements = Box::new(elements.chain(controls));
+        }
+        elements = Box::new(elements.chain(score.iter()));
+
+        // TODO do this ahead of time!
+        // Anchor to edges and compensate for aspect ratio
+        let mut elements = Box::new(elements.map(|e| {
+            let mut e = e.clone();
+            e.shader_constant.size[0] /= self.scale_x;
+            e.shader_constant.size[1] /= self.scale_y;
+            e.shader_constant.offset[0] /= self.scale_x;
+            e.shader_constant.offset[1] /= self.scale_y;
+            e.shader_constant.offset[0] += e.shader_constant.offset[0].signum() * (self.scale_x - 1.0) / 2.0;
+            e.shader_constant.offset[1] += e.shader_constant.offset[0].signum() * (self.scale_y - 1.0) / 2.0;
+            e
+        })) as Box<dyn Iterator<Item = UIElement>>;
+
+        // Centered elements only compensate for aspect ratio
+        let game_state_elements = game_state_elements.map(|e| {
+            let mut e = e.clone();
+            e.shader_constant.size[0] /= self.scale_x;
+            e.shader_constant.size[1] /= self.scale_y;
+            e.shader_constant.offset[0] /= self.scale_x;
+            e.shader_constant.offset[1] /= self.scale_y;
+            e
+        });
+        elements = Box::new(elements.chain(game_state_elements));
 
         builder
             .bind_pipeline_graphics(self.graphics_pipeline.clone());

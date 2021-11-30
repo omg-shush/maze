@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "maze"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ash",
  "png",

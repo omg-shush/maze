@@ -32,7 +32,7 @@ impl Texture {
             Format::R8G8B8A8_SRGB,
             queue).unwrap();
         println!("Loaded texture {}", file);
-        (Texture { file: file.to_string(), image }, future.boxed())
+        (Texture { file: file.split(".").next().unwrap().split('/').last().unwrap().to_string(), image }, future.boxed())
     }
 
     pub fn access(&self) -> Arc<dyn ImageViewAbstract> {

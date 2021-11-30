@@ -1,7 +1,35 @@
 # Which graphics card to use (0, 1, 2, ...), or "discrete" to prefer the first discrete card found
 card: discrete
 
-# Path to resource directory, containing models and textures. Defaults to "res"
-resources: res
+# Path to resource directory, containing models and textures. Defaults to "res/"
+resources: res/
 
-resolution: 640x640
+# Size of window in pixels eg. 640x480, or "borderless" or "exclusive" fullscreen
+window: 1280x720
+# Preferred rendering resolution, eg. 640x480, or "max"
+resolution: max
+
+target-fps: 60 # Fixed integer FPS, or "unlimited"
+
+# UI settings
+##############
+
+# Display the controls indicators, "true" or "false"
+display-controls: true
+
+# Field of view, default 90
+fov: 90
+
+# UI scaling, default 1.0
+ui-scale: 1.0
+
+# Game difficulty settings
+###########################
+
+# Dimensions of game world (xyzw), default 5x5x3x3
+dimensions: 5x5x3x3
+
+# seconds for ghost to move 1 square
+ghost-move-time: 1.65
+# number of food items to eat before winning
+food-count: 10

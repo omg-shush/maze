@@ -9,14 +9,13 @@ use vulkano::descriptor_set::{SingleLayoutDescSetPool};
 use vulkano_win::VkSurfaceBuild;
 use winit::event::{Event, KeyboardInput, VirtualKeyCode, WindowEvent, ElementState};
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::{WindowBuilder};
-use winit::dpi::{PhysicalPosition, LogicalSize};
-
+use winit::window::{Fullscreen, WindowBuilder};
+use winit::dpi::PhysicalSize;
 use vulkano::device::{Device, Features, DeviceExtensions};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::instance::{Instance, ApplicationInfo};
 use vulkano::Version;
-use vulkano::image::ImageUsage;
+use vulkano::image::{ImageUsage, SampleCount};
 use vulkano::image::view::ImageView;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::swapchain;
@@ -30,7 +29,6 @@ use vulkano::format::{ClearValue, Format};
 
 use world::World;
 use pipeline::cs::ty::Vertex;
-use parameters::Params;
 use player::{Player, GameState};
 use model::Model;
 use ui::UserInterface;
@@ -57,7 +55,7 @@ const NAME: &str = "4D Pacman v0.2";
 
 fn main() {
     // Load user config file
-    let path = env::args().nth(1).unwrap_or("config.txt".to_owned());
+    let path = env::args().nth(1).unwrap_or("config.txt".to_string());
     let config = Config::new(&path);
 
     // Create vulkan instance
@@ -100,19 +98,31 @@ fn main() {
 
     // Create window
     let event_loop = EventLoop::new();
-    let surface = WindowBuilder::new()
-        .with_inner_size(LogicalSize { width: , height: 640 })
-        .with_position(PhysicalPosition { x : 0, y: 0 })
-        .with_resizable(false)
-        .with_title(NAME)
-        .build_vk_surface(&event_loop, instance.clone()).unwrap();
-
-    // Configure parameters
-    let params = Params::new(device.clone());
+    let surface = {
+        let mut builder = WindowBuilder::new();
+        builder = match config.window {
+            config::Window::Borderless => builder.with_fullscreen(Some (Fullscreen::Borderless(None))),
+            config::Window::Exclusive => builder,
+            config::Window::Size(width, height) => builder.with_inner_size(PhysicalSize { width, height })
+        };
+        builder
+            .with_resizable(false)
+            .with_title(NAME)
+            .build_vk_surface(&event_loop, instance.clone()).unwrap()
+    };
+    if config.window == config::Window::Exclusive {
+        surface.window().set_fullscreen(Some(Fullscreen::Exclusive(surface.window().current_monitor().unwrap().video_modes().next().unwrap())));
+    }
 
     // Create swapchain
     let surface_caps = surface.capabilities(card).unwrap();
-    let resolution = surface_caps.max_image_extent;
+    let (res_x, res_y) = match config.resolution {
+        config::Resolution::Fixed (x, y) => (
+            x.clamp(surface_caps.min_image_extent[0], surface_caps.max_image_extent[0]),
+            y.clamp(surface_caps.min_image_extent[1], surface_caps.max_image_extent[1])),
+        config::Resolution::Max => (surface_caps.max_image_extent[0], surface_caps.max_image_extent[1])
+    };
+    let resolution = [res_x, res_y];
     let buffers = 2.clamp(surface_caps.min_image_count, surface_caps.max_image_count.unwrap_or(u32::MAX));
     let transform = surface_caps.current_transform;
     let (format, _color_space) = surface_caps.supported_formats[0];
@@ -128,8 +138,21 @@ fn main() {
                                      .transform(transform)
                                      .build().unwrap();
 
+    let (samples, sample_count) = [
+        (device.physical_device().properties().framebuffer_color_sample_counts.sample1, 1, SampleCount::Sample1),
+        (device.physical_device().properties().framebuffer_color_sample_counts.sample2, 2, SampleCount::Sample2),
+        (device.physical_device().properties().framebuffer_color_sample_counts.sample4, 4, SampleCount::Sample4),
+        (device.physical_device().properties().framebuffer_color_sample_counts.sample8, 8, SampleCount::Sample8),
+        (device.physical_device().properties().framebuffer_color_sample_counts.sample16, 16, SampleCount::Sample16),
+        (device.physical_device().properties().framebuffer_color_sample_counts.sample32, 32, SampleCount::Sample32),
+        (device.physical_device().properties().framebuffer_color_sample_counts.sample64, 64, SampleCount::Sample64),
+    ].iter()
+    .filter_map(|(avail, i, sc)| if *avail { Some ((*i, *sc)) } else { None })
+    .max_by_key(|(i, _sc)| *i)
+    .expect("No framebuffer color sampling options available");
+
     // Compile shader pipeline
-    let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, &params);
+    let pipeline = pipeline::compile_shaders::<Vertex>(device.clone(), &swapchain, samples);
 
     let mut init_futures = Vec::new();
 
@@ -142,7 +165,7 @@ fn main() {
     ].map(|file| {
         let (model, future) = Model::new(draw_queue.clone(), &(config.resource_path.clone() + file));
         init_futures.push(future);
-        (model.file.to_owned(), model)
+        (model.file.to_string(), model)
     }).into_iter().collect();
 
     // Load textures
@@ -155,15 +178,15 @@ fn main() {
     ].map(|file| {
         let (texture, future) = Texture::new(draw_queue.clone(), &(config.resource_path.clone() + file));
         init_futures.push(future);
-        (texture.file.split(".").next().unwrap().to_owned(), texture)
+        (texture.file.to_string(), texture)
     }).into_iter().collect();
 
     // Initialize game elements
-    let (mut world, world_init_future) = World::new(&params, draw_queue.clone());
-    let (mut player, player_init_future) = Player::new(device.clone(), draw_queue.clone());
-    let (mut ghost, ghost_init_future) = Ghost::new(&params, draw_queue.clone(), [1.0, 1.0, 1.0]);
-    let mut objects = Objects::new(draw_queue.clone(), &mut world, &params);
-    let ui = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone(), &textures);
+    let (mut world, world_init_future) = World::new(&config, draw_queue.clone());
+    let (mut player, player_init_future) = Player::new(&config, draw_queue.clone(), resolution);
+    let (mut ghost, ghost_init_future) = Ghost::new(&config, draw_queue.clone(), [1.0, 1.0, 1.0]);
+    let mut objects = Objects::new(draw_queue.clone(), &mut world, &config);
+    let ui = UserInterface::new(draw_queue.clone(),pipeline.render_pass.clone(), &textures, resolution, &config);
     init_futures.push(world_init_future);
     init_futures.push(player_init_future);
     init_futures.push(ghost_init_future);
@@ -172,13 +195,13 @@ fn main() {
         acc.join(future).boxed()
     }).then_signal_fence_and_flush().expect("Flushing init commands failed");
 
-    println!("Edit the provided config.txt file, or specify a custom file path as the first command line argument");
     println!("---------------------------");
     println!("{0}", NAME);
     println!("WASD or Arrow Keys to move horizontally");
     println!("SPACE to move up, LeftControl to move down");
     println!("Q and E to move through left and right portals");
-    println!("green screen = win");
+    println!("Eat all the things to win");
+    println!("Edit the provided config.txt file to change settings, or specify a custom config file as the first command line argument");
 
     // Initialize framebuffers
     let dimensions = images[0].dimensions();
@@ -187,12 +210,12 @@ fn main() {
         dimensions: [dimensions[0] as f32, dimensions[1] as f32],
         depth_range: 0.0..1.0
     };
-    let dview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, params.sample_count, Format::D16_UNORM).unwrap()).unwrap();
+    let dview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, sample_count, Format::D16_UNORM).unwrap()).unwrap();
     let mut framebuffers = images
         .iter()
         .map(|image| {
             let view = ImageView::new(image.clone()).unwrap();
-            let mview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, params.sample_count, format).unwrap()).unwrap();
+            let mview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, sample_count, format).unwrap()).unwrap();
             Arc::new(
                 Framebuffer::start(pipeline.render_pass.clone())
                     .add(mview).unwrap()
@@ -307,8 +330,10 @@ fn main() {
         }
         Event::RedrawEventsCleared => {
             let now = Instant::now();
-            if (now - previous_frame).as_secs_f32() < 1.0 / params.fps {
-                return; // Don't render another frame yet
+            if let config::TargetFps::Fixed (fps) = config.target_fps {
+                if (now - previous_frame).as_secs_f32() < 1.0 / fps as f32 {
+                    return; // Don't render another frame yet
+                }
             }
             previous_frame = now;
 
@@ -316,6 +341,9 @@ fn main() {
 
             if recreate_swapchain {
                 let dimensions: [u32; 2] = surface.window().inner_size().into();
+                if dimensions == [0, 0] {
+                    return; // Minimized; don't recreate swapchain at all
+                }
                 viewport = Viewport {
                     origin: [0.0, 0.0],
                     dimensions: [dimensions[0] as f32, dimensions[1] as f32],
@@ -328,12 +356,12 @@ fn main() {
                         _ => panic!("Failed to recreate swapchain!")
                     };
                 swapchain = new_swapchain;
-                let dview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, params.sample_count, Format::D16_UNORM).unwrap()).unwrap();
+                let dview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, sample_count, Format::D16_UNORM).unwrap()).unwrap();
                 framebuffers = new_images
                     .iter()
                     .map(|image| {
                         let view = ImageView::new(image.clone()).unwrap();
-                        let mview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, params.sample_count, format).unwrap()).unwrap();
+                        let mview = ImageView::new(AttachmentImage::transient_multisampled(device.clone(), dimensions, sample_count, format).unwrap()).unwrap();
                         Arc::new(
                             Framebuffer::start(pipeline.render_pass.clone())
                                 .add(mview).unwrap()
@@ -367,7 +395,7 @@ fn main() {
 
             // Update game state
             if player.game_state == GameState::Playing {
-                player.update(&params, &mut world, &mut objects);
+                player.update(&config, &mut world, &mut objects);
                 ghost.update(&mut player, &world);
                 objects.update(&player);
             }
@@ -383,7 +411,7 @@ fn main() {
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone());
                 
                 // Game over; only render UI
-                ui.render(&player, &world, &params, &mut builder);
+                ui.render(&player, &world, &config, &mut builder);
 
                 builder.end_render_pass().unwrap();
             } else {
@@ -396,11 +424,11 @@ fn main() {
                     .set_viewport(0, [viewport.clone()])
                     .bind_pipeline_graphics(pipeline.graphics_pipeline.clone());
 
-                world.render(&models, &player, &mut desc_set_pool, &mut builder, &pipeline);
-                player.render(&mut desc_set_pool, &mut builder, &pipeline);
+                world.render(&models, &player, &ghost, &mut desc_set_pool, &mut builder, &pipeline);
+                player.render(&ghost, &world, &mut desc_set_pool, &mut builder, &pipeline);
                 ghost.render(&player, &world, &mut desc_set_pool, &mut builder, &pipeline);
                 objects.render(&player, &world, &models, &mut builder, &pipeline);
-                ui.render(&player, &world, &params, &mut builder);
+                ui.render(&player, &world, &config, &mut builder);
                 
                 builder.end_render_pass().unwrap();
             }

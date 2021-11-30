@@ -11,7 +11,8 @@ use crate::pipeline::vs::ty::ViewProjectionData;
 use crate::pipeline::{InstanceModel, Pipeline};
 use crate::player::Player;
 use crate::world::{Cell, Coordinate, World};
-use crate::parameters::{Params, RAINBOW};
+use crate::parameters::RAINBOW;
+use crate::config::Config;
 use crate::linalg;
 
 struct Food {
@@ -27,13 +28,8 @@ pub struct Objects {
 }
 
 impl Objects {
-    pub fn new(queue: Arc<Queue>, world: &mut World, params: &Params) -> Objects {
-        let food = generate_food(world, params);
-        // let food_buffer = DeviceLocalBuffer::array(
-        //     queue.device().clone(),
-        //     params.food as u64,
-        //     BufferUsage::vertex_buffer_transfer_destination(),
-        //     [queue.family()]).unwrap();
+    pub fn new(queue: Arc<Queue>, world: &mut World, config: &Config) -> Objects {
+        let food = generate_food(world, config);
         let food_buffer = CpuAccessibleBuffer::from_iter(
             queue.device().clone(),
             BufferUsage::vertex_buffer_transfer_destination(),
@@ -99,8 +95,8 @@ impl Objects {
     }
 }
 
-fn generate_food(world: &mut World, params: &Params) -> HashMap<Coordinate, Food> {
-    (0..params.food).map(|_| {
+fn generate_food(world: &mut World, config: &Config) -> HashMap<Coordinate, Food> {
+    (0..config.food_count).map(|_| {
         let (x, y, z, w) = world.random_empty_cell();
         world.cells[w][z][y][x] = Cell::Food;
         let world_transform = world.world_transform(w, 0.0);

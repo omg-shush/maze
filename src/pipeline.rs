@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use winit::window::Window;
-
 use vulkano::device::Device;
 use vulkano::swapchain::Swapchain;
 use vulkano::pipeline::{ComputePipeline, GraphicsPipeline};
@@ -10,8 +9,6 @@ use vulkano::pipeline::vertex::{BuffersDefinition, Vertex};
 use vulkano::render_pass::RenderPass;
 use vulkano::impl_vertex;
 use vulkano::format::Format;
-
-use crate::parameters::Params;
 
 pub mod vs {
     vulkano_shaders::shader! {
@@ -26,15 +23,23 @@ pub mod vs {
             mat4 vp;
             vec3 pushColor;
         } vpd;
+        layout(set = 0, binding = 0) uniform PlayerPositionData {
+            vec3 player_pos;
+            vec3 ghost_pos;
+        } ppd;
         layout(location = 0) out vec3 passPosition;
         layout(location = 1) out vec3 passColor;
         layout(location = 2) out vec3 passNormal;
+        layout(location = 3) out vec3 playerVec;
+        layout(location = 4) out vec3 ghostVec;
         void main() {
             vec4 worldPosition = m * vec4(position, 1.0);
             gl_Position = vpd.vp * worldPosition;
             passPosition = worldPosition.xyz;
             passColor = vpd.pushColor;
             passNormal = normalize((m * vec4(normal, 0.0)).xyz);
+            playerVec = ppd.player_pos - worldPosition.xyz;
+            ghostVec = ppd.ghost_pos - worldPosition.xyz;
         }
         ",
         types_meta: {
@@ -51,22 +56,28 @@ pub mod fs {
         layout(location = 0) in vec3 position;
         layout(location = 1) in vec3 color;
         layout(location = 2) in vec3 normal;
-        layout(set = 0, binding = 0) uniform PlayerPositionData {
-            vec3 pos;
-        } ppd;
+        layout(location = 3) in vec3 playerVec;
+        layout(location = 4) in vec3 ghostVec;
         layout(location = 0) out vec4 f_color;
-        void main() {
-            vec3 directional_light = normalize(vec3(-2, -1, 3));
-            float ambient = 0.01;
-            float directional = 0.39 * clamp(dot(normal, -directional_light), 0.0, 1.0);
-            float distance2 = length(ppd.pos - position);
+
+        float point_light(vec3 light_pos) {
+            float distance2 = length(light_pos);
             distance2 *= distance2;
-            float point = clamp((1.0 / distance2) * clamp(dot(normal, ppd.pos - position), 0.0, 1.0), 0.0, 1.0);
-            point = 0.6 * point;
+            return clamp((1.0 / distance2) * clamp(dot(normal, normalize(light_pos)), 0.0, 1.0), 0.0, 1.0);
+        }
+
+        void main() {
+            vec3 directional_light = normalize(vec3(1, -2, 3));
+            float ambient = 0.02;
+            float directional = 0.33 * clamp(dot(normal, -directional_light), 0.0, 1.0);
+            float point = 0.65 *  clamp(point_light(playerVec) + point_light(ghostVec), 0.0, 1.0);
             float brightness = ambient + directional + point;
             f_color = vec4(color * brightness, 1.0);
         }
-        "
+        ",
+        types_meta: {
+            #[derive(Clone, Copy, PartialEq, Debug, Default)]
+        }
     }
 }
 
@@ -196,7 +207,7 @@ pub struct Pipeline {
 pub fn compile_shaders<T: Vertex>(
         device: Arc<Device>,
         swapchain: &Swapchain<Window>,
-        params: &Params) -> Pipeline {
+        samples: u32) -> Pipeline {
     let vertex_shader = vs::Shader::load(device.clone()).expect("Failed to load vertex shader");
     let fragment_shader = fs::Shader::load(device.clone()).expect("Failed to load fragment shader");
     let compute_shader = cs::Shader::load(device.clone()).expect("Failed to load compute shader");
@@ -209,7 +220,7 @@ pub fn compile_shaders<T: Vertex>(
                     load: Clear,
                     store: DontCare,
                     format: swapchain.format(),
-                    samples: params.samples,
+                    samples: samples,
                 },
                 color_image: {
                     load: DontCare,
@@ -221,7 +232,7 @@ pub fn compile_shaders<T: Vertex>(
                     load: Clear,
                     store: DontCare,
                     format: Format::D16_UNORM,
-                    samples: params.samples,
+                    samples: samples,
                 }
             },
             pass: {

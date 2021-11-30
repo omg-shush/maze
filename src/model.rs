@@ -63,7 +63,7 @@ impl Model {
             queue
         ).unwrap();
         (Model {
-            file: filename.split('.').next().unwrap().to_owned(),
+            file: filename.split('.').next().unwrap().split('/').last().unwrap().to_string(),
             vertices
         }, future.boxed())
     }

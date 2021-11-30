@@ -13,15 +13,16 @@ use vulkano::descriptor_set::SingleLayoutDescSetPool;
 use vulkano::device::Queue;
 use vulkano::sync::{now, GpuFuture};
 
+use crate::ghost::Ghost;
 use crate::linalg;
 use crate::pipeline::Pipeline;
 use crate::disjoint_set;
 use crate::pipeline::InstanceModel;
-use crate::pipeline::fs::ty::PlayerPositionData;
 use crate::player::Player;
 use crate::model::Model;
-use crate::pipeline::vs::ty::ViewProjectionData;
-use crate::parameters::{Params, RAINBOW};
+use crate::pipeline::vs::ty::{ViewProjectionData, PlayerPositionData};
+use crate::parameters::RAINBOW;
+use crate::config::Config;
 
 pub type Coordinate = (usize, usize, usize, usize);
 
@@ -81,15 +82,15 @@ pub struct World {
     pub fourth: usize,
 
     // Dimensions: fourth x depth x height x width
-    pub cells: Box<[Box<[Box<[Box<[Cell]>]>]>]>,
+    pub cells: Vec<Vec<Vec<Vec<Cell>>>>,
     // Vertical walls, fourth x depth x height x (width + 1)
-    pub xwalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
+    pub xwalls: Vec<Vec<Vec<Vec<Wall>>>>,
     // Horizontal walls, fourth x depth x (height + 1) x width
-    pub ywalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
+    pub ywalls: Vec<Vec<Vec<Vec<Wall>>>>,
     // Floors/Ceilings, fourth x (depth + 1) x height x width
-    pub zwalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
+    pub zwalls: Vec<Vec<Vec<Vec<Wall>>>>,
     // I don't even know any more, (fourth + 1) x depth x height x width
-    pub wwalls: Box<[Box<[Box<[Box<[Wall]>]>]>]>,
+    pub wwalls: Vec<Vec<Vec<Vec<Wall>>>>,
 
     player_position_buffer_pool: CpuBufferPool<[PlayerPositionData; 1]>,
     vertex_buffers: Vec<Vec<LevelBuffers>>, // lists of model matrices, indexed by: fourth -> level
@@ -97,15 +98,15 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(params: &Params, queue: Arc<Queue>) -> (World, Box<dyn GpuFuture>) {
+    pub fn new(config: &Config, queue: Arc<Queue>) -> (World, Box<dyn GpuFuture>) {
         // Start by creating a 2D grid, with walls around each cell
-        let [width, height, depth, fourth] = params.dimensions;
+        let [width, height, depth, fourth] = config.dimensions;
         let mut world = World {
-            cells: vec![vec![vec![vec![Cell::Empty; width].into_boxed_slice(); height].into_boxed_slice(); depth].into_boxed_slice(); fourth].into_boxed_slice(),
-            xwalls: vec![vec![vec![vec![Wall::SolidWall; width + 1].into_boxed_slice(); height].into_boxed_slice(); depth].into_boxed_slice(); fourth].into_boxed_slice(),
-            ywalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height + 1].into_boxed_slice(); depth].into_boxed_slice(); fourth].into_boxed_slice(),
-            zwalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height].into_boxed_slice(); depth + 1].into_boxed_slice(); fourth].into_boxed_slice(),
-            wwalls: vec![vec![vec![vec![Wall::SolidWall; width].into_boxed_slice(); height].into_boxed_slice(); depth].into_boxed_slice(); fourth + 1].into_boxed_slice(),
+            cells: vec![vec![vec![vec![Cell::Empty; width]; height]; depth]; fourth],
+            xwalls: vec![vec![vec![vec![Wall::SolidWall; width + 1]; height]; depth]; fourth],
+            ywalls: vec![vec![vec![vec![Wall::SolidWall; width]; height + 1]; depth]; fourth],
+            zwalls: vec![vec![vec![vec![Wall::SolidWall; width]; height]; depth + 1]; fourth],
+            wwalls: vec![vec![vec![vec![Wall::SolidWall; width]; height]; depth]; fourth + 1],
             player_position_buffer_pool: CpuBufferPool::new(queue.device().clone(), BufferUsage::uniform_buffer()),
             vertex_buffers: Vec::new(),
             neighbors: HashMap::new(),
@@ -148,30 +149,46 @@ impl World {
         (world, future)
     }
 
-    pub fn render(&self, models: &HashMap<String, Model>, player: &Player, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
-        let player_position_buffer = self.player_position_buffer_pool.next([
-            PlayerPositionData { pos: linalg::add(player.get_position()[0..3].try_into().unwrap(), [0.0, 0.0, 0.4]) }
-        ]).unwrap();
-        let descriptor_set = {
-            let mut builder = desc_set_pool.next();
-            builder.add_buffer(Arc::new(player_position_buffer)).unwrap();
-            builder.build().unwrap()
-        };
-        builder
-            .bind_descriptor_sets(
-                PipelineBindPoint::Graphics,
-                pipeline.graphics_pipeline.layout().clone(),
-                0,
-                descriptor_set
-            );
+    pub fn render(&self, models: &HashMap<String, Model>, player: &Player, ghost: &Ghost, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
         let view_projection = linalg::mul(player.camera.projection(), player.camera.view());
 
         let fourth = player.cell()[3];
         let between = player.get_position()[3];
 
-        for w in fourth - 1..fourth + 2 {
+        for w in fourth - 2..=fourth + 2 {
             if w >= 0 && w < self.fourth as i32 {
                 let w = w as usize;
+
+                let player_position_buffer = self.player_position_buffer_pool.next([
+                    PlayerPositionData {
+                        player_pos: {
+                            let diff = w as f32 - player.get_position()[3];
+                            let mut arr: [f32; 3] = player.get_position()[0..3].try_into().unwrap();
+                            arr[0] -= diff * (1 + self.width) as f32;
+                            arr
+                        },
+                        ghost_pos: {
+                            let diff = w as f32 - ghost.position()[3];
+                            let mut arr: [f32; 3] = ghost.position()[0..3].try_into().unwrap();
+                            arr[0] -= diff * (1 + self.width) as f32;
+                            arr
+                        },
+                        ..Default::default()
+                    }
+                ]).unwrap();
+                let descriptor_set = {
+                    let mut builder = desc_set_pool.next();
+                    builder.add_buffer(Arc::new(player_position_buffer)).unwrap();
+                    builder.build().unwrap()
+                };
+                builder
+                    .bind_descriptor_sets(
+                        PipelineBindPoint::Graphics,
+                        pipeline.graphics_pipeline.layout().clone(),
+                        0,
+                        descriptor_set
+                    );
+
                 let wvp = linalg::mul(view_projection, self.world_transform(w, between));
                 self.render_fourth(w, wvp, player, models, builder, pipeline);
             }

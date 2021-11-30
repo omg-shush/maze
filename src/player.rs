@@ -4,19 +4,20 @@ use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuBufferPool, ImmutableBuffer, TypedBufferAccess};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::descriptor_set::SingleLayoutDescSetPool;
-use vulkano::device::{Device, Queue};
+use vulkano::device::Queue;
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::sync::GpuFuture;
 
+use crate::ghost::Ghost;
 use crate::objects::Objects;
-use crate::parameters::{Params, RAINBOW};
+use crate::parameters::RAINBOW;
+use crate::config::Config;
 use crate::world::{Cell, World};
 use crate::camera::Camera;
 use crate::linalg;
 use crate::pipeline::{InstanceModel, Pipeline};
 use crate::pipeline::cs::ty::Vertex;
-use crate::pipeline::fs::ty::PlayerPositionData;
-use crate::pipeline::vs::ty::ViewProjectionData;
+use crate::pipeline::vs::ty::{ViewProjectionData, PlayerPositionData};
 
 const CAMERA_OFFSET: [f32; 3] = [0.0, 1.6, 4.0];
 
@@ -40,12 +41,13 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(device: Arc<Device>, queue: Arc<Queue>) -> (Player, Box<dyn GpuFuture>) {
+    pub fn new(config: &Config, queue: Arc<Queue>, resolution: [u32; 2]) -> (Player, Box<dyn GpuFuture>) {
+        let device = queue.device();
         let (vertex_buffer, future) = ImmutableBuffer::from_iter(
             player_buffer().into_iter(),
             BufferUsage::vertex_buffer(),
-            queue).unwrap();
-        let mut player_camera = Camera::new();
+            queue.clone()).unwrap();
+        let mut player_camera = Camera::new(resolution, config.fov);
         player_camera.turn([30.0, 0.0, 0.0].map(|f: f32| f.to_radians()));
         player_camera.position(CAMERA_OFFSET);
         let p = Player {
@@ -65,12 +67,16 @@ impl Player {
         (p, future.boxed())
     }
 
-    pub fn render(&self, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
+    pub fn render(&self, ghost: &Ghost, world: &World, desc_set_pool: &mut SingleLayoutDescSetPool, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, pipeline: &Pipeline) {
         let instance_buffer = self.instance_buffer_pool.next([
             InstanceModel { m: linalg::model([0.0, 0.0, 0.0], [1.0, 1.0, 1.0], self.position[0..3].try_into().unwrap()) }
         ]).unwrap();
         let player_position_buffer = self.player_position_buffer_pool.next(
-            PlayerPositionData { pos: linalg::add(self.position[0..3].try_into().unwrap(), [0.0, 0.0, 0.8]) }).unwrap();
+            PlayerPositionData {
+                player_pos: linalg::add(self.position[0..3].try_into().unwrap(), [0.0, 0.0, 0.8]),
+                ghost_pos: ghost.world_position(self, world),
+                ..Default::default()
+            }).unwrap();
         let descriptor_set = {
             let mut builder = desc_set_pool.next();
             builder.add_buffer(Arc::new(player_position_buffer)).unwrap();
@@ -116,7 +122,7 @@ impl Player {
         self.dest_position
     }
 
-    pub fn update(&mut self, params: &Params, world: &mut World, objects: &mut Objects) {
+    pub fn update(&mut self, config: &Config, world: &mut World, objects: &mut Objects) {
         let now = Instant::now();
 
         // Interpolate position
@@ -142,7 +148,7 @@ impl Player {
             world.cells[w][z][y][x] = Cell::Empty;
             objects.remove_food((x, y, z, w));
             // Victory if all food is eaten
-            if self.score == params.food as u32 {
+            if self.score == config.food_count as u32 {
                 self.game_state = GameState::Won;
             }
         }
