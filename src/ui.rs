@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::iter::empty;
 use std::sync::Arc;
-use std::time::Instant;
 
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
@@ -13,7 +12,7 @@ use vulkano::sampler::Sampler;
 use vulkano::device::{Queue, Device};
 use vulkano::impl_vertex;
 
-use crate::config::Config;
+use crate::config::{Config, DisplayClock};
 use crate::player::{GameState, Player};
 use crate::texture::Texture;
 use crate::world::World;
@@ -32,6 +31,7 @@ pub struct UserInterface {
     digits: Vec<UIElement>,
     slash: UIElement,
     colon: UIElement,
+    minus: UIElement,
     win: UIElement,
     lose: UIElement
 }
@@ -125,11 +125,17 @@ impl UserInterface {
                 size: [digit_ui_width, digit_ui_height],
                 offset: [1.0 - 3.0 * digit_ui_width, 1.0 - digit_ui_height] } };
         let colon = UIElement {
-            texture_descriptor: digits_desc_set,
+            texture_descriptor: digits_desc_set.clone(),
             shader_constant: ShaderConstant {
                 texture_region: [DIGIT_WIDTH, DIGIT_HEIGHT, 2.0 * DIGIT_WIDTH, 2.0 * DIGIT_HEIGHT],
                 size: [digit_ui_width, digit_ui_height],
                 offset: [1.0 - 3.0 * digit_ui_width, -1.0] } };
+        let minus = UIElement {
+            texture_descriptor: digits_desc_set,
+            shader_constant: ShaderConstant {
+                texture_region: [2.0 * DIGIT_WIDTH, DIGIT_HEIGHT, 3.0 * DIGIT_WIDTH, 2.0 * DIGIT_HEIGHT],
+                size: [digit_ui_width, digit_ui_height],
+                offset: [1.0 - 6.0 * digit_ui_width, -1.0] } };
 
         let win = UIElement { texture_descriptor: tex_desc_set(layout.clone(), sampler.clone(), &textures["win"]),
             shader_constant: ShaderConstant {
@@ -149,7 +155,7 @@ impl UserInterface {
         let ratio = x as f32 / y as f32;
         let (scale_x, scale_y) = if ratio >= 1.0 { (ratio, 1.0) } else { (1.0, 1.0 / ratio) };
 
-        UserInterface { graphics_pipeline, rect_buffer, scale_x, scale_y, controls, digits, slash, colon, win, lose }
+        UserInterface { graphics_pipeline, rect_buffer, scale_x, scale_y, controls, digits, slash, colon, minus, win, lose }
     }
 
     pub fn render(&self, player: &Player, world: &World, config: &Config, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
@@ -176,6 +182,7 @@ impl UserInterface {
         let mut stopwatch_mins_tens = self.digits[stopwatch_mins / 10 % 10].clone();
         stopwatch_mins_tens.shader_constant.offset = [1.0 - 5.0 * digit_ui_width, -1.0];
         let stopwatch = [stopwatch_mins_tens, stopwatch_mins_ones, self.colon.clone(), stopwatch_secs_tens, stopwatch_secs_ones];
+        let minus = [self.minus.clone()];
 
         // Display player's score
         let mut score_ones = self.digits[player.score as usize % 10].clone();
@@ -200,7 +207,12 @@ impl UserInterface {
         if config.display_controls {
             elements = Box::new(elements.chain(controls));
         }
-        if config.display_stopwatch {
+        if let DisplayClock::Timer(_) = config.display_clock {
+            if player.game_state != GameState::Won {
+                elements = Box::new(elements.chain(minus.iter()));
+            }
+        }
+        if config.display_clock != DisplayClock::None {
             elements = Box::new(elements.chain(stopwatch.iter()));
         }
         elements = Box::new(elements.chain(score.iter()));

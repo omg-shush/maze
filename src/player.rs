@@ -11,7 +11,7 @@ use vulkano::sync::GpuFuture;
 use crate::ghost::Ghost;
 use crate::objects::Objects;
 use crate::parameters::RAINBOW;
-use crate::config::Config;
+use crate::config::{Config, DisplayClock};
 use crate::world::{Cell, World};
 use crate::camera::Camera;
 use crate::linalg;
@@ -61,7 +61,7 @@ impl Player {
             game_state: GameState::Playing,
             score: 0,
             start_time: None,
-            stopwatch: 0,
+            stopwatch: if let DisplayClock::Timer(duration) = config.display_clock { duration } else { 0 },
             camera: player_camera,
             vertex_buffer,
             instance_buffer_pool: CpuBufferPool::new(device.clone(), BufferUsage::vertex_buffer()),
@@ -134,9 +134,21 @@ impl Player {
     pub fn update(&mut self, config: &Config, world: &mut World, objects: &mut Objects) {
         let now = Instant::now();
 
-        // Update stopwatch
+        // Update clock
         if let Some (start_time) = self.start_time {
-            self.stopwatch = (now - start_time).as_secs_f32().round() as u32;
+            let game_duration = (now - start_time).as_secs_f32().round() as u32;
+            match config.display_clock {
+                DisplayClock::Stopwatch => self.stopwatch = game_duration,
+                DisplayClock::Timer(timer_duration) => {
+                    if (timer_duration as isize - game_duration as isize) < 0 {
+                        self.game_state = GameState::Lost;
+                        return;
+                    } else {
+                        self.stopwatch = timer_duration - game_duration;
+                    }
+                },
+                DisplayClock::None => {}
+            }
         }
 
         // Interpolate position
@@ -164,6 +176,7 @@ impl Player {
             // Victory if all food is eaten
             if self.score == config.food_count as u32 {
                 self.game_state = GameState::Won;
+                self.stopwatch = (now - self.start_time.unwrap()).as_secs_f32().round() as u32;
             }
         }
     }

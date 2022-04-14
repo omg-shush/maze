@@ -19,8 +19,8 @@ target-fps: 60
 # Display the controls indicators, "true" or "false"
 display-controls: true
 
-# Display the stopwatch
-display-stopwatch: false
+# Clock mode. Can be: "none" for no clock, "stopwatch" for a clock counting up, or "##" for a timer counting down (eg "60" for 1-minute)
+display-clock: none
 
 # Field of view, default 90
 fov: 90
@@ -34,7 +34,8 @@ ui-scale: 1.0
 # Dimensions of game world (xyzw), default 5x5x3x3
 dimensions: 5x5x3x3
 
-# seconds for ghost to move 1 square
+# Seconds for ghost to move 1 square
 ghost-move-time: 1.65
-# number of food items to eat before winning
+
+# Number of food items to eat before winning
 food-count: 10
