@@ -37,7 +37,9 @@ pub struct Player {
     vertex_buffer: Arc<ImmutableBuffer<[Vertex]>>,
     instance_buffer_pool: CpuBufferPool<[InstanceModel; 1]>,
     player_position_buffer_pool: CpuBufferPool<PlayerPositionData>,
-    pub score: u32
+    pub score: u32,
+    start_time: Option<Instant>,
+    pub stopwatch: u32
 }
 
 impl Player {
@@ -58,6 +60,8 @@ impl Player {
             reach_dest: Instant::now(),
             game_state: GameState::Playing,
             score: 0,
+            start_time: None,
+            stopwatch: 0,
             camera: player_camera,
             vertex_buffer,
             instance_buffer_pool: CpuBufferPool::new(device.clone(), BufferUsage::vertex_buffer()),
@@ -101,6 +105,11 @@ impl Player {
     }
 
     pub fn move_position(&mut self, delta: [i32; 4], seconds: f32) {
+        // Start stopwatch timer
+        if self.start_time.is_none() {
+            self.start_time = Some (Instant::now());
+        }
+
         for i in 0..delta.len() {
             self.dest_position[i] += delta[i];
         }
@@ -124,6 +133,11 @@ impl Player {
 
     pub fn update(&mut self, config: &Config, world: &mut World, objects: &mut Objects) {
         let now = Instant::now();
+
+        // Update stopwatch
+        if let Some (start_time) = self.start_time {
+            self.stopwatch = (now - start_time).as_secs_f32().round() as u32;
+        }
 
         // Interpolate position
         if now > self.reach_dest {

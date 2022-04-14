@@ -255,7 +255,20 @@ fn main() {
             }, ..
         } => {
             if player.game_state != GameState::Playing {
-                return; // ignore user input
+                if keycode == VirtualKeyCode::R && state == ElementState::Pressed {
+                    // Reset game state
+                    let (new_world, world_init_future) = World::new(&config, draw_queue.clone());
+                    let (new_player, player_init_future) = Player::new(&config, draw_queue.clone(), resolution);
+                    let (new_ghost, ghost_init_future) = Ghost::new(&config, draw_queue.clone(), [1.0, 1.0, 1.0]);
+                    world = new_world;
+                    player = new_player;
+                    ghost = new_ghost;
+                    objects = Objects::new(draw_queue.clone(), &mut world, &config);
+                    world_init_future.join(player_init_future).join(ghost_init_future)
+                        .then_signal_fence_and_flush().expect("Flushing restart commands failed");
+                        // TODO tie to previous_frame future
+                }
+                return;
             }
             let seconds = 0.5;
             match keycode {

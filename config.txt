@@ -6,16 +6,21 @@ resources: res/
 
 # Size of window in pixels eg. 640x480, or "borderless" or "exclusive" fullscreen
 window: 1280x720
+
 # Preferred rendering resolution, eg. 640x480, or "max"
 resolution: max
 
-target-fps: 60 # Fixed integer FPS, or "unlimited"
+# Fixed integer FPS, or "unlimited"
+target-fps: 60
 
 # UI settings
 ##############
 
 # Display the controls indicators, "true" or "false"
 display-controls: true
+
+# Display the stopwatch
+display-stopwatch: false
 
 # Field of view, default 90
 fov: 90

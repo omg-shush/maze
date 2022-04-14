@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::iter::empty;
 use std::sync::Arc;
+use std::time::Instant;
 
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
@@ -30,6 +31,7 @@ pub struct UserInterface {
     controls: Vec<([i32; 4], UIElement, UIElement)>,
     digits: Vec<UIElement>,
     slash: UIElement,
+    colon: UIElement,
     win: UIElement,
     lose: UIElement
 }
@@ -117,11 +119,17 @@ impl UserInterface {
                 offset: [0.0, 0.0] // Will be set later, when needed
             } } }).collect();
         let slash = UIElement {
-            texture_descriptor: digits_desc_set,
+            texture_descriptor: digits_desc_set.clone(),
             shader_constant: ShaderConstant {
                 texture_region: [0.0, DIGIT_HEIGHT, DIGIT_WIDTH, 2.0 * DIGIT_HEIGHT],
                 size: [digit_ui_width, digit_ui_height],
                 offset: [1.0 - 3.0 * digit_ui_width, 1.0 - digit_ui_height] } };
+        let colon = UIElement {
+            texture_descriptor: digits_desc_set,
+            shader_constant: ShaderConstant {
+                texture_region: [DIGIT_WIDTH, DIGIT_HEIGHT, 2.0 * DIGIT_WIDTH, 2.0 * DIGIT_HEIGHT],
+                size: [digit_ui_width, digit_ui_height],
+                offset: [1.0 - 3.0 * digit_ui_width, -1.0] } };
 
         let win = UIElement { texture_descriptor: tex_desc_set(layout.clone(), sampler.clone(), &textures["win"]),
             shader_constant: ShaderConstant {
@@ -141,7 +149,7 @@ impl UserInterface {
         let ratio = x as f32 / y as f32;
         let (scale_x, scale_y) = if ratio >= 1.0 { (ratio, 1.0) } else { (1.0, 1.0 / ratio) };
 
-        UserInterface { graphics_pipeline, rect_buffer, scale_x, scale_y, controls, digits, slash, win, lose }
+        UserInterface { graphics_pipeline, rect_buffer, scale_x, scale_y, controls, digits, slash, colon, win, lose }
     }
 
     pub fn render(&self, player: &Player, world: &World, config: &Config, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
@@ -155,6 +163,19 @@ impl UserInterface {
         });
 
         let [digit_ui_width, digit_ui_height] = [DIGIT_WIDTH, DIGIT_HEIGHT].map(|f| f * config.ui_scale);
+
+        // Display stopwatch
+        let stopwatch_secs = player.stopwatch as usize % 60;
+        let stopwatch_mins = player.stopwatch as usize / 60 % 60;
+        let mut stopwatch_secs_ones = self.digits[stopwatch_secs % 10].clone();
+        stopwatch_secs_ones.shader_constant.offset = [1.0 - 1.0 * digit_ui_width, -1.0];
+        let mut stopwatch_secs_tens = self.digits[stopwatch_secs / 10 % 10].clone();
+        stopwatch_secs_tens.shader_constant.offset = [1.0 - 2.0 * digit_ui_width, -1.0];
+        let mut stopwatch_mins_ones = self.digits[stopwatch_mins % 10].clone();
+        stopwatch_mins_ones.shader_constant.offset = [1.0 - 4.0 * digit_ui_width, -1.0];
+        let mut stopwatch_mins_tens = self.digits[stopwatch_mins / 10 % 10].clone();
+        stopwatch_mins_tens.shader_constant.offset = [1.0 - 5.0 * digit_ui_width, -1.0];
+        let stopwatch = [stopwatch_mins_tens, stopwatch_mins_ones, self.colon.clone(), stopwatch_secs_tens, stopwatch_secs_ones];
 
         // Display player's score
         let mut score_ones = self.digits[player.score as usize % 10].clone();
@@ -178,6 +199,9 @@ impl UserInterface {
         let mut elements = Box::new(empty()) as Box<dyn Iterator<Item = &UIElement>>;
         if config.display_controls {
             elements = Box::new(elements.chain(controls));
+        }
+        if config.display_stopwatch {
+            elements = Box::new(elements.chain(stopwatch.iter()));
         }
         elements = Box::new(elements.chain(score.iter()));
 

@@ -55,6 +55,7 @@ pub struct Config {
     pub fov: u32,
     pub ui_scale: f32,
     pub display_controls: bool,
+    pub display_stopwatch: bool,
     pub dimensions: [usize; 4],
     pub ghost_move_time: f32,
     pub food_count: usize
@@ -71,6 +72,7 @@ impl Default for Config {
             fov: 90,
             ui_scale: 1.0,
             display_controls: true,
+            display_stopwatch: false,
             dimensions: [5, 5, 5, 3],
             ghost_move_time: 1.65,
             food_count: 10
@@ -107,6 +109,7 @@ impl Config {
                 "fov" => acc.fov = value.parse().expect("Expected integer"),
                 "ui-scale" => acc.ui_scale = value.parse().expect("Expected decimal value"),
                 "display-controls" => acc.display_controls = value.parse().expect("Expected true or false"),
+                "display-stopwatch" => acc.display_stopwatch = value.parse().expect("Expected true or false"),
                 "dimensions" => acc.dimensions = value.split("x").map(|s| s.parse::<usize>().unwrap()).collect::<Vec<_>>().try_into().unwrap(),
                 "ghost-move-time" => acc.ghost_move_time = value.parse().expect("Expected decimal value"),
                 "food-count" => acc.food_count = value.parse().expect("Expected integer"),
